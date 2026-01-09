@@ -9,6 +9,7 @@ import {
   calcWinRateR,
 } from "@/lib/metrics"
 
+import { EquityCurve } from "@/components/equity-curve"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function DashboardPage() {
@@ -18,6 +19,10 @@ export default function DashboardPage() {
   const expectancy = trades ? calcExpectancyR(trades) : null
   const maxDD = trades ? calcMaxDrawdownR(trades) : null
   const profitFactor = trades ? calcProfitFactorR(trades) : null
+
+  const tradesWithRCount = trades
+    ? trades.filter((t) => typeof t.rMultiple === "number").length
+    : null
 
   return (
     <div className="space-y-4">
@@ -70,12 +75,28 @@ export default function DashboardPage() {
         </Card>
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Equity Curve (R)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {trades ? (
+            <EquityCurve trades={trades} />
+          ) : (
+            <div className="text-sm text-muted-foreground">Loading…</div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="text-sm text-muted-foreground">
-        Total trades: <span className="text-foreground font-medium">{trades?.length ?? "…"}</span>
+        Total trades:{" "}
+        <span className="font-medium text-foreground">
+          {trades?.length ?? "…"}
+        </span>
         {" • "}
         Trades with R:{" "}
-        <span className="text-foreground font-medium">
-          {trades ? trades.filter((t) => typeof t.rMultiple === "number").length : "…"}
+        <span className="font-medium text-foreground">
+          {tradesWithRCount ?? "…"}
         </span>
       </div>
     </div>
