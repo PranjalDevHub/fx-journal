@@ -8,8 +8,8 @@ export type Trade = {
   strategy?: string // e.g., "NY Breakout"
   direction: TradeDirection
 
-  openTime: string // ISO string (UTC)
-  closeTime: string // ISO string (UTC)
+  openTime: string // ISO UTC
+  closeTime: string // ISO UTC
 
   entryPrice: number
   exitPrice: number
@@ -17,9 +17,8 @@ export type Trade = {
   takeProfit?: number
 
   notes?: string
-  tags?: string[] // simple for now
+  tags?: string[]
 
-  // computed at save time
   pips?: number
   rMultiple?: number
 
@@ -27,8 +26,29 @@ export type Trade = {
   updatedAt: string
 }
 
+export type PsychPhase = "BEFORE" | "DURING" | "AFTER"
+
+export type PsychSnapshot = {
+  id: string
+  tradeId: string
+  phase: PsychPhase
+
+  // 0..4
+  confidence: number
+  stress: number
+  fomo: number
+  revenge: number
+  discipline: number
+
+  note?: string
+
+  createdAt: string
+  updatedAt: string
+}
+
 class FxJournalDB extends Dexie {
   trades!: Table<Trade, string>
+  psychSnapshots!: Table<PsychSnapshot, string>
 
   constructor() {
     super("fx-journal")
@@ -38,9 +58,15 @@ class FxJournalDB extends Dexie {
       trades: "id, instrument, direction, openTime, closeTime, createdAt",
     })
 
-    // v2 adds "strategy" as an indexed field
+    // v2 added strategy index
     this.version(2).stores({
       trades: "id, instrument, direction, strategy, openTime, closeTime, createdAt",
+    })
+
+    // v3 adds psychology snapshots table
+    this.version(3).stores({
+      trades: "id, instrument, direction, strategy, openTime, closeTime, createdAt",
+      psychSnapshots: "id, tradeId, phase, [tradeId+phase], createdAt",
     })
   }
 }

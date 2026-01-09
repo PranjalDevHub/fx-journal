@@ -26,14 +26,18 @@ import {
 
 import { TradeFormDialog } from "@/components/trade-form-dialog"
 import { TradeViewDialog } from "@/components/trade-view-dialog"
+import { PsychologyDialog } from "@/components/psychology-dialog"
 
 export function TradeActions({ trade }: { trade: Trade }) {
   const [openView, setOpenView] = useState(false)
   const [openEdit, setOpenEdit] = useState(false)
   const [openDelete, setOpenDelete] = useState(false)
+  const [openPsych, setOpenPsych] = useState(false)
 
   async function handleDelete() {
     await db.trades.delete(trade.id)
+    // also delete psych snapshots for this trade (cleanup)
+    await db.psychSnapshots.where("tradeId").equals(trade.id).delete()
     setOpenDelete(false)
   }
 
@@ -52,6 +56,9 @@ export function TradeActions({ trade }: { trade: Trade }) {
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setOpenEdit(true)}>
             Edit
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setOpenPsych(true)}>
+            Psychology
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => setOpenDelete(true)}
@@ -77,6 +84,12 @@ export function TradeActions({ trade }: { trade: Trade }) {
         open={openEdit}
         onOpenChange={setOpenEdit}
         trade={trade}
+      />
+
+      <PsychologyDialog
+        trade={trade}
+        open={openPsych}
+        onOpenChange={setOpenPsych}
       />
 
       <AlertDialog open={openDelete} onOpenChange={setOpenDelete}>

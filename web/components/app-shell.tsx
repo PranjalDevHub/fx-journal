@@ -1,11 +1,12 @@
 import Link from "next/link"
 import { ReactNode } from "react"
-import { BarChart3, NotebookPen, Clock } from "lucide-react"
+import { BarChart3, NotebookPen, Clock, Brain } from "lucide-react"
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: BarChart3 },
   { href: "/trades", label: "Trades", icon: NotebookPen },
   { href: "/time", label: "Time", icon: Clock },
+  { href: "/psychology", label: "Psychology", icon: Brain },
 ]
 
 export function AppShell({ children }: { children: ReactNode }) {
