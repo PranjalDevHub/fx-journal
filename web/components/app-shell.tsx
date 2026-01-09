@@ -1,10 +1,11 @@
 import Link from "next/link"
-import type { ReactNode } from "react"
-import { BarChart3, NotebookPen } from "lucide-react"
+import { ReactNode } from "react"
+import { BarChart3, NotebookPen, Clock } from "lucide-react"
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: BarChart3 },
   { href: "/trades", label: "Trades", icon: NotebookPen },
+  { href: "/time", label: "Time", icon: Clock },
 ]
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -14,9 +15,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <aside className="rounded-xl border bg-card p-4">
           <div className="mb-4">
             <div className="text-lg font-semibold leading-none">FX Journal</div>
-            <div className="text-sm text-muted-foreground">
-              Personal analytics
-            </div>
+            <div className="text-sm text-muted-foreground">Personal analytics</div>
           </div>
 
           <nav className="space-y-1">
@@ -40,9 +39,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </aside>
 
-        <main className="rounded-xl border bg-card p-4 md:p-6">
-          {children}
-        </main>
+        <main className="rounded-xl border bg-card p-4 md:p-6">{children}</main>
       </div>
     </div>
   )
