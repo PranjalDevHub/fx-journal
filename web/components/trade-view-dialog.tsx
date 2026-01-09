@@ -35,7 +35,12 @@ export function TradeViewDialog(props: {
         ) : (
           <div className="space-y-4 text-sm">
             <div className="flex items-center justify-between">
-              <div className="text-lg font-semibold">{trade.instrument}</div>
+              <div className="space-y-1">
+                <div className="text-lg font-semibold">{trade.instrument}</div>
+                <div className="text-muted-foreground">
+                  Strategy: <span className="text-foreground font-medium">{trade.strategy ?? "—"}</span>
+                </div>
+              </div>
               <Badge variant={trade.direction === "BUY" ? "default" : "secondary"}>
                 {trade.direction}
               </Badge>

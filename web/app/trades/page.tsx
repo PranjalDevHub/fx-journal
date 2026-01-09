@@ -1,13 +1,25 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
-import { db } from "@/lib/db"
+import { db, type TradeDirection } from "@/lib/db"
 
 import { TradeFormDialog } from "@/components/trade-form-dialog"
 import { TradeActions } from "@/components/trade-actions"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
 import {
   Table,
   TableBody,
@@ -16,13 +28,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 
 function fmtDate(iso: string) {
-  const d = new Date(iso)
-  return d.toLocaleString()
+  return new Date(iso).toLocaleString()
 }
+
+type DirFilter = "ALL" | TradeDirection
 
 export default function TradesPage() {
   const trades = useLiveQuery(
@@ -32,13 +43,47 @@ export default function TradesPage() {
 
   const [openAdd, setOpenAdd] = useState(false)
 
+  // Filters
+  const [instrumentFilter, setInstrumentFilter] = useState("")
+  const [strategyFilter, setStrategyFilter] = useState("")
+  const [directionFilter, setDirectionFilter] = useState<DirFilter>("ALL")
+  const [tagFilter, setTagFilter] = useState("")
+
+  const filteredTrades = useMemo(() => {
+    if (!trades) return null
+
+    const inst = instrumentFilter.trim().toUpperCase()
+    const strat = strategyFilter.trim().toLowerCase()
+    const tag = tagFilter.trim().toLowerCase()
+
+    return trades.filter((t) => {
+      if (inst && !t.instrument.toUpperCase().includes(inst)) return false
+      if (directionFilter !== "ALL" && t.direction !== directionFilter) return false
+
+      const s = (t.strategy ?? "").toLowerCase()
+      if (strat && !s.includes(strat)) return false
+
+      const tags = (t.tags ?? []).map((x) => x.toLowerCase())
+      if (tag && !tags.some((x) => x.includes(tag))) return false
+
+      return true
+    })
+  }, [trades, instrumentFilter, strategyFilter, directionFilter, tagFilter])
+
+  function clearFilters() {
+    setInstrumentFilter("")
+    setStrategyFilter("")
+    setDirectionFilter("ALL")
+    setTagFilter("")
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Trades</h1>
           <p className="text-sm text-muted-foreground">
-            Your journal is stored offline in this browser (IndexedDB).
+            Filter by strategy, instrument, direction, and tags.
           </p>
         </div>
 
@@ -49,22 +94,94 @@ export default function TradesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">
-            Trade list {trades ? `(${trades.length})` : ""}
-          </CardTitle>
+          <CardTitle className="text-sm">Filters</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div className="space-y-2">
+              <Label>Instrument</Label>
+              <Input
+                value={instrumentFilter}
+                onChange={(e) => setInstrumentFilter(e.target.value)}
+                placeholder="EURUSD"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Strategy</Label>
+              <Input
+                value={strategyFilter}
+                onChange={(e) => setStrategyFilter(e.target.value)}
+                placeholder="NY Breakout"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Direction</Label>
+              <Select
+                value={directionFilter}
+                onValueChange={(v) => setDirectionFilter(v as DirFilter)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="All" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">ALL</SelectItem>
+                  <SelectItem value="BUY">BUY</SelectItem>
+                  <SelectItem value="SELL">SELL</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Tag contains</Label>
+              <Input
+                value={tagFilter}
+                onChange={(e) => setTagFilter(e.target.value)}
+                placeholder="breakout"
+              />
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <div className="text-sm text-muted-foreground">
+              Showing{" "}
+              <span className="font-medium text-foreground">
+                {filteredTrades ? filteredTrades.length : "…"}
+              </span>{" "}
+              of{" "}
+              <span className="font-medium text-foreground">
+                {trades ? trades.length : "…"}
+              </span>{" "}
+              trades
+            </div>
+
+            <Button variant="secondary" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Trade list</CardTitle>
         </CardHeader>
 
         <CardContent>
-          {!trades ? (
+          {!filteredTrades ? (
             <div className="text-sm text-muted-foreground">Loading…</div>
-          ) : trades.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No trades yet.</div>
+          ) : filteredTrades.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              No trades match your filters.
+            </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Close time</TableHead>
                   <TableHead>Instrument</TableHead>
+                  <TableHead>Strategy</TableHead>
                   <TableHead>Dir</TableHead>
                   <TableHead className="text-right">Entry</TableHead>
                   <TableHead className="text-right">Exit</TableHead>
@@ -75,10 +192,19 @@ export default function TradesPage() {
               </TableHeader>
 
               <TableBody>
-                {trades.map((t) => (
+                {filteredTrades.map((t) => (
                   <TableRow key={t.id}>
                     <TableCell className="text-sm">{fmtDate(t.closeTime)}</TableCell>
+
                     <TableCell className="font-medium">{t.instrument}</TableCell>
+
+                    <TableCell className="text-sm">
+                      {t.strategy ? (
+                        <Badge variant="outline">{t.strategy}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
 
                     <TableCell>
                       <Badge variant={t.direction === "BUY" ? "default" : "secondary"}>

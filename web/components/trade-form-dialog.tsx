@@ -38,9 +38,8 @@ function nowLocalDatetimeValue() {
 }
 
 function toIsoFromDatetimeLocal(value: string) {
-  // Treat input as local time, store ISO UTC
-  const d = new Date(value)
-  return d.toISOString()
+  const d = new Date(value) // interpreted as local time
+  return d.toISOString() // stored as UTC ISO
 }
 
 function toDatetimeLocalFromIso(iso: string) {
@@ -58,11 +57,12 @@ export function TradeFormDialog(props: {
   mode: Mode
   open: boolean
   onOpenChange: (open: boolean) => void
-  trade?: Trade // required for edit
+  trade?: Trade
 }) {
   const { mode, open, onOpenChange, trade } = props
 
   const [instrument, setInstrument] = useState("EURUSD")
+  const [strategy, setStrategy] = useState("")
   const [direction, setDirection] = useState<TradeDirection>("BUY")
   const [openTime, setOpenTime] = useState(nowLocalDatetimeValue())
   const [closeTime, setCloseTime] = useState(nowLocalDatetimeValue())
@@ -75,7 +75,6 @@ export function TradeFormDialog(props: {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // When dialog opens, preload values for edit, or reset for add
   useEffect(() => {
     if (!open) return
     setError(null)
@@ -87,6 +86,7 @@ export function TradeFormDialog(props: {
       }
 
       setInstrument(trade.instrument)
+      setStrategy(trade.strategy ?? "")
       setDirection(trade.direction)
       setOpenTime(toDatetimeLocalFromIso(trade.openTime))
       setCloseTime(toDatetimeLocalFromIso(trade.closeTime))
@@ -97,8 +97,8 @@ export function TradeFormDialog(props: {
       setTags((trade.tags ?? []).join(", "))
       setNotes(trade.notes ?? "")
     } else {
-      // add mode reset
       setInstrument("EURUSD")
+      setStrategy("")
       setDirection("BUY")
       setOpenTime(nowLocalDatetimeValue())
       setCloseTime(nowLocalDatetimeValue())
@@ -137,8 +137,6 @@ export function TradeFormDialog(props: {
     if (!Number.isFinite(entry) || !Number.isFinite(exit)) {
       return setError("Entry and Exit must be valid numbers.")
     }
-
-    // optional extra safety
     if (sl !== undefined && !Number.isFinite(sl)) return setError("Stop Loss must be a valid number.")
     if (tp !== undefined && !Number.isFinite(tp)) return setError("Take Profit must be a valid number.")
 
@@ -146,32 +144,38 @@ export function TradeFormDialog(props: {
     try {
       const nowIso = new Date().toISOString()
       const instrumentClean = instrument.trim().toUpperCase()
+      const strategyClean = strategy.trim()
 
       const pips = calcPips({ instrument: instrumentClean, direction, entry, exit })
       const rMultiple = calcRMultiple({ direction, entry, exit, stopLoss: sl })
+
+      const common = {
+        instrument: instrumentClean,
+        strategy: strategyClean ? strategyClean : undefined,
+        direction,
+        openTime: toIsoFromDatetimeLocal(openTime),
+        closeTime: toIsoFromDatetimeLocal(closeTime),
+        entryPrice: entry,
+        exitPrice: exit,
+        stopLoss: sl,
+        takeProfit: tp,
+        tags: tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+        notes: notes.trim() || undefined,
+        pips,
+        rMultiple,
+        updatedAt: nowIso,
+      } as const
 
       if (mode === "add") {
         const id = crypto.randomUUID()
 
         const newTrade: Trade = {
           id,
-          instrument: instrumentClean,
-          direction,
-          openTime: toIsoFromDatetimeLocal(openTime),
-          closeTime: toIsoFromDatetimeLocal(closeTime),
-          entryPrice: entry,
-          exitPrice: exit,
-          stopLoss: sl,
-          takeProfit: tp,
-          tags: tags
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean),
-          notes: notes.trim() || undefined,
-          pips,
-          rMultiple,
+          ...common,
           createdAt: nowIso,
-          updatedAt: nowIso,
         }
 
         await db.trades.add(newTrade)
@@ -180,22 +184,7 @@ export function TradeFormDialog(props: {
 
         const updatedTrade: Trade = {
           ...trade,
-          instrument: instrumentClean,
-          direction,
-          openTime: toIsoFromDatetimeLocal(openTime),
-          closeTime: toIsoFromDatetimeLocal(closeTime),
-          entryPrice: entry,
-          exitPrice: exit,
-          stopLoss: sl,
-          takeProfit: tp,
-          tags: tags
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean),
-          notes: notes.trim() || undefined,
-          pips,
-          rMultiple,
-          updatedAt: nowIso,
+          ...common,
         }
 
         await db.trades.put(updatedTrade)
@@ -216,19 +205,22 @@ export function TradeFormDialog(props: {
         <DialogHeader>
           <DialogTitle>{mode === "add" ? "Add trade" : "Edit trade"}</DialogTitle>
           <DialogDescription>
-            {mode === "add"
-              ? "Log quickly. You can refine later."
-              : "Fix details to keep analytics accurate."}
+            {mode === "add" ? "Log quickly. You can refine later." : "Fix details to keep analytics accurate."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label>Instrument</Label>
+            <Input value={instrument} onChange={(e) => setInstrument(e.target.value)} placeholder="EURUSD" />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Strategy (optional)</Label>
             <Input
-              value={instrument}
-              onChange={(e) => setInstrument(e.target.value)}
-              placeholder="EURUSD"
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value)}
+              placeholder="NY Breakout"
             />
           </div>
 
@@ -247,74 +239,42 @@ export function TradeFormDialog(props: {
 
           <div className="space-y-2">
             <Label>Open time</Label>
-            <Input
-              type="datetime-local"
-              value={openTime}
-              onChange={(e) => setOpenTime(e.target.value)}
-            />
+            <Input type="datetime-local" value={openTime} onChange={(e) => setOpenTime(e.target.value)} />
           </div>
 
           <div className="space-y-2">
             <Label>Close time</Label>
-            <Input
-              type="datetime-local"
-              value={closeTime}
-              onChange={(e) => setCloseTime(e.target.value)}
-            />
+            <Input type="datetime-local" value={closeTime} onChange={(e) => setCloseTime(e.target.value)} />
           </div>
 
           <div className="space-y-2">
             <Label>Entry</Label>
-            <Input
-              value={entryPrice}
-              onChange={(e) => setEntryPrice(e.target.value)}
-              placeholder="1.08750"
-            />
+            <Input value={entryPrice} onChange={(e) => setEntryPrice(e.target.value)} placeholder="1.08750" />
           </div>
 
           <div className="space-y-2">
             <Label>Exit</Label>
-            <Input
-              value={exitPrice}
-              onChange={(e) => setExitPrice(e.target.value)}
-              placeholder="1.08910"
-            />
+            <Input value={exitPrice} onChange={(e) => setExitPrice(e.target.value)} placeholder="1.08910" />
           </div>
 
           <div className="space-y-2">
             <Label>Stop loss (optional)</Label>
-            <Input
-              value={stopLoss}
-              onChange={(e) => setStopLoss(e.target.value)}
-              placeholder="1.08650"
-            />
+            <Input value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder="1.08650" />
           </div>
 
           <div className="space-y-2">
             <Label>Take profit (optional)</Label>
-            <Input
-              value={takeProfit}
-              onChange={(e) => setTakeProfit(e.target.value)}
-              placeholder="1.09050"
-            />
+            <Input value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} placeholder="1.09050" />
           </div>
 
           <div className="space-y-2 sm:col-span-2">
             <Label>Tags (comma separated)</Label>
-            <Input
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
-              placeholder="london, breakout, A+ setup"
-            />
+            <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="london, breakout, A+ setup" />
           </div>
 
           <div className="space-y-2 sm:col-span-2">
             <Label>Notes</Label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="What happened? What did you do well? What to improve?"
-            />
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What happened? What did you do well? What to improve?" />
           </div>
         </div>
 
