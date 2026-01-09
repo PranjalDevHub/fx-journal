@@ -4,8 +4,8 @@ export type TradeDirection = "BUY" | "SELL"
 
 export type Trade = {
   id: string
-  instrument: string // e.g., EURUSD
-  strategy?: string // e.g., "NY Breakout"
+  instrument: string
+  strategy?: string
   direction: TradeDirection
 
   openTime: string // ISO UTC
@@ -22,6 +22,8 @@ export type Trade = {
   pips?: number
   rMultiple?: number
 
+  screenshotId?: string // NEW: link to screenshot import
+
   createdAt: string
   updatedAt: string
 }
@@ -33,12 +35,11 @@ export type PsychSnapshot = {
   tradeId: string
   phase: PsychPhase
 
-  // 0..4
-  confidence: number
-  stress: number
-  fomo: number
-  revenge: number
-  discipline: number
+  confidence: number // 0..4
+  stress: number // 0..4
+  fomo: number // 0..4
+  revenge: number // 0..4
+  discipline: number // 0..4
 
   note?: string
 
@@ -46,9 +47,19 @@ export type PsychSnapshot = {
   updatedAt: string
 }
 
+export type ScreenshotImport = {
+  id: string
+  image: Blob
+  mimeType: string
+  ocrText: string
+  extracted: Record<string, unknown>
+  createdAt: string
+}
+
 class FxJournalDB extends Dexie {
   trades!: Table<Trade, string>
   psychSnapshots!: Table<PsychSnapshot, string>
+  screenshots!: Table<ScreenshotImport, string>
 
   constructor() {
     super("fx-journal")
@@ -58,15 +69,23 @@ class FxJournalDB extends Dexie {
       trades: "id, instrument, direction, openTime, closeTime, createdAt",
     })
 
-    // v2 added strategy index
+    // v2 added strategy
     this.version(2).stores({
       trades: "id, instrument, direction, strategy, openTime, closeTime, createdAt",
     })
 
-    // v3 adds psychology snapshots table
+    // v3 added psychology
     this.version(3).stores({
       trades: "id, instrument, direction, strategy, openTime, closeTime, createdAt",
       psychSnapshots: "id, tradeId, phase, [tradeId+phase], createdAt",
+    })
+
+    // v4 adds screenshots table + screenshotId on trade
+    this.version(4).stores({
+      trades:
+        "id, instrument, direction, strategy, screenshotId, openTime, closeTime, createdAt",
+      psychSnapshots: "id, tradeId, phase, [tradeId+phase], createdAt",
+      screenshots: "id, createdAt",
     })
   }
 }
