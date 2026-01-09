@@ -3,6 +3,8 @@
 import { useMemo } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db } from "@/lib/db"
+import { useWorkspace } from "@/components/workspace-provider"
+
 import {
   calcExpectancyR,
   calcMaxDrawdownR,
@@ -26,8 +28,26 @@ import {
 import { Badge } from "@/components/ui/badge"
 
 export default function DashboardPage() {
-  const trades = useLiveQuery(() => db.trades.toArray(), [])
-  const snaps = useLiveQuery(() => db.psychSnapshots.toArray(), [])
+  const { activeWorkspaceId } = useWorkspace()
+
+  // Workspace-aware + ignore soft-deleted rows
+  const trades = useLiveQuery(async () => {
+    const rows = await db.trades
+      .where("workspaceId")
+      .equals(activeWorkspaceId)
+      .and((t) => !t.deletedAt)
+      .toArray()
+    return rows
+  }, [activeWorkspaceId])
+
+  const snaps = useLiveQuery(async () => {
+    const rows = await db.psychSnapshots
+      .where("workspaceId")
+      .equals(activeWorkspaceId)
+      .and((p) => !p.deletedAt)
+      .toArray()
+    return rows
+  }, [activeWorkspaceId])
 
   const winRate = trades ? calcWinRateR(trades) : null
   const expectancy = trades ? calcExpectancyR(trades) : null
@@ -58,6 +78,12 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">
           Performance + behavior insights (no signals).
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Workspace:{" "}
+          <span className="font-medium text-foreground">
+            {activeWorkspaceId === "local" ? "Local (offline)" : "My Journal (cloud)"}
+          </span>
         </p>
       </div>
 

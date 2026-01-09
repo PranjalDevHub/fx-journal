@@ -1,241 +1,299 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react"
-import { db, type Trade, type TradeDirection } from "@/lib/db"
-import { calcPips, calcPoints, calcRMultiple, getInstrumentSizes } from "@/lib/trade-math"
-import { InstrumentSelect } from "@/components/instrument-select"
+import React, { useEffect, useMemo, useState } from "react";
+import { db, type Trade } from "@/lib/db";
+import { useWorkspace } from "@/components/workspace-provider";
 
-import { Button } from "@/components/ui/button"
+// IMPORTANT: bring back your searchable dropdown + favorites star
+import * as InstrumentSelectMod from "@/components/instrument-select";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
+} from "@/components/ui/select";
 
-type Mode = "add" | "edit"
+type Props = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  trade?: Trade; // edit if provided
+};
 
-function nowLocalDatetimeValue() {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, "0")
-  const yyyy = d.getFullYear()
-  const mm = pad(d.getMonth() + 1)
-  const dd = pad(d.getDate())
-  const hh = pad(d.getHours())
-  const min = pad(d.getMinutes())
-  return `${yyyy}-${mm}-${dd}T${hh}:${min}`
+function isoNow() {
+  return new Date().toISOString();
 }
 
-function toIsoFromDatetimeLocal(value: string) {
-  const d = new Date(value)
-  return d.toISOString()
+// Convert ISO -> datetime-local input value
+function toLocalInput(iso?: string) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    d.getFullYear() +
+    "-" +
+    pad(d.getMonth() + 1) +
+    "-" +
+    pad(d.getDate()) +
+    "T" +
+    pad(d.getHours()) +
+    ":" +
+    pad(d.getMinutes())
+  );
 }
 
-function toDatetimeLocalFromIso(iso: string) {
-  const d = new Date(iso)
-  const pad = (n: number) => String(n).padStart(2, "0")
-  const yyyy = d.getFullYear()
-  const mm = pad(d.getMonth() + 1)
-  const dd = pad(d.getDate())
-  const hh = pad(d.getHours())
-  const min = pad(d.getMinutes())
-  return `${yyyy}-${mm}-${dd}T${hh}:${min}`
+// Convert datetime-local input -> ISO UTC
+function fromLocalInput(v: string) {
+  if (!v) return isoNow();
+  return new Date(v).toISOString();
 }
 
-export function TradeFormDialog(props: {
-  mode: Mode
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  trade?: Trade
+function parseTags(text: string): string[] {
+  const parts = text
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return Array.from(new Set(parts));
+}
+
+/**
+ * Minimal trade-math used in this dialog.
+ * Your project also has /lib/trade-math.ts, but because exports may differ,
+ * this stays self-contained and keeps the XAUUSD fix behavior.
+ */
+const FIAT = new Set([
+  "USD","EUR","GBP","JPY","CHF","CAD","AUD","NZD","SEK","NOK","DKK","SGD","HKD","MXN","ZAR","TRY","PLN","HUF","CZK",
+]);
+
+function isFXPair(symbol: string) {
+  const s = symbol.toUpperCase().trim();
+  if (s.length !== 6) return false;
+  const base = s.slice(0, 3);
+  const quote = s.slice(3, 6);
+  return FIAT.has(base) && FIAT.has(quote);
+}
+
+function pipSize(instrument: string) {
+  const s = instrument.toUpperCase().trim();
+
+  // Metals FIRST (prevents XAUUSD misclassification)
+  if (s === "XAUUSD") return 0.1;
+  if (s === "XAGUSD") return 0.01;
+
+  if (isFXPair(s)) {
+    const quote = s.slice(3, 6);
+    return quote === "JPY" ? 0.01 : 0.0001;
+  }
+
+  return 0.0001;
+}
+
+function computePipsAndR(input: {
+  instrument: string;
+  direction: "BUY" | "SELL";
+  entryPrice: number;
+  exitPrice: number;
+  stopLoss?: number;
 }) {
-  const { mode, open, onOpenChange, trade } = props
+  const ps = pipSize(input.instrument);
 
-  const [instrument, setInstrument] = useState("EURUSD")
-  const [strategy, setStrategy] = useState("")
-  const [direction, setDirection] = useState<TradeDirection>("BUY")
-  const [openTime, setOpenTime] = useState(nowLocalDatetimeValue())
-  const [closeTime, setCloseTime] = useState(nowLocalDatetimeValue())
-  const [entryPrice, setEntryPrice] = useState("")
-  const [exitPrice, setExitPrice] = useState("")
-  const [stopLoss, setStopLoss] = useState("")
-  const [takeProfit, setTakeProfit] = useState("")
-  const [tags, setTags] = useState("")
-  const [notes, setNotes] = useState("")
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
+  const profitMove =
+    input.direction === "BUY"
+      ? input.exitPrice - input.entryPrice
+      : input.entryPrice - input.exitPrice;
+
+  const pips = profitMove / ps;
+
+  let rMultiple: number | undefined = undefined;
+  if (input.stopLoss !== undefined && input.stopLoss !== null && Number.isFinite(input.stopLoss)) {
+    const riskMove = Math.abs(input.entryPrice - input.stopLoss);
+    if (riskMove > 0) rMultiple = profitMove / riskMove;
+  }
+
+  const round2 = (x: number) => Math.round(x * 100) / 100;
+
+  return {
+    pips: Number.isFinite(pips) ? round2(pips) : undefined,
+    rMultiple: rMultiple !== undefined && Number.isFinite(rMultiple) ? round2(rMultiple) : undefined,
+  };
+}
+
+export function TradeFormDialog({ open, onOpenChange, trade }: Props) {
+  const { activeWorkspaceId } = useWorkspace();
+  const isEdit = !!trade;
+
+  // Handle both named and default export for InstrumentSelect
+  const InstrumentSelectAny: any =
+    (InstrumentSelectMod as any).InstrumentSelect ?? (InstrumentSelectMod as any).default;
+
+  const initial = useMemo(() => {
+    return {
+      instrument: trade?.instrument ?? "",
+      strategy: trade?.strategy ?? "",
+      direction: (trade?.direction ?? "BUY") as "BUY" | "SELL",
+      openTime: toLocalInput(trade?.openTime ?? isoNow()),
+      closeTime: toLocalInput(trade?.closeTime ?? isoNow()),
+      entryPrice: trade?.entryPrice ?? 0,
+      exitPrice: trade?.exitPrice ?? 0,
+      stopLoss: trade?.stopLoss ?? undefined,
+      takeProfit: trade?.takeProfit ?? undefined,
+      tagsText: (trade?.tags ?? []).join(", "),
+      notes: trade?.notes ?? "",
+    };
+  }, [trade]);
+
+  const [instrument, setInstrument] = useState(initial.instrument);
+  const [strategy, setStrategy] = useState(initial.strategy);
+  const [direction, setDirection] = useState<"BUY" | "SELL">(initial.direction);
+  const [openTime, setOpenTime] = useState(initial.openTime);
+  const [closeTime, setCloseTime] = useState(initial.closeTime);
+  const [entryPrice, setEntryPrice] = useState<number>(initial.entryPrice);
+  const [exitPrice, setExitPrice] = useState<number>(initial.exitPrice);
+  const [stopLoss, setStopLoss] = useState<number | undefined>(initial.stopLoss);
+  const [takeProfit, setTakeProfit] = useState<number | undefined>(initial.takeProfit);
+  const [tagsText, setTagsText] = useState(initial.tagsText);
+  const [notes, setNotes] = useState(initial.notes);
+
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return
-    setError(null)
+    if (!open) return;
+    setInstrument(initial.instrument);
+    setStrategy(initial.strategy);
+    setDirection(initial.direction);
+    setOpenTime(initial.openTime);
+    setCloseTime(initial.closeTime);
+    setEntryPrice(initial.entryPrice);
+    setExitPrice(initial.exitPrice);
+    setStopLoss(initial.stopLoss);
+    setTakeProfit(initial.takeProfit);
+    setTagsText(initial.tagsText);
+    setNotes(initial.notes);
+    setErr(null);
+  }, [open, initial]);
 
-    if (mode === "edit") {
-      if (!trade) {
-        setError("Missing trade to edit.")
-        return
-      }
+  async function onSave() {
+    setSaving(true);
+    setErr(null);
 
-      setInstrument(trade.instrument)
-      setStrategy(trade.strategy ?? "")
-      setDirection(trade.direction)
-      setOpenTime(toDatetimeLocalFromIso(trade.openTime))
-      setCloseTime(toDatetimeLocalFromIso(trade.closeTime))
-      setEntryPrice(String(trade.entryPrice))
-      setExitPrice(String(trade.exitPrice))
-      setStopLoss(trade.stopLoss !== undefined ? String(trade.stopLoss) : "")
-      setTakeProfit(trade.takeProfit !== undefined ? String(trade.takeProfit) : "")
-      setTags((trade.tags ?? []).join(", "))
-      setNotes(trade.notes ?? "")
-    } else {
-      setInstrument("EURUSD")
-      setStrategy("")
-      setDirection("BUY")
-      setOpenTime(nowLocalDatetimeValue())
-      setCloseTime(nowLocalDatetimeValue())
-      setEntryPrice("")
-      setExitPrice("")
-      setStopLoss("")
-      setTakeProfit("")
-      setTags("")
-      setNotes("")
-    }
-  }, [open, mode, trade])
-
-  const preview = useMemo(() => {
-    const entry = Number(entryPrice)
-    const exit = Number(exitPrice)
-    if (!Number.isFinite(entry) || !Number.isFinite(exit)) return null
-
-    const inst = instrument.trim().toUpperCase()
-    const sizes = getInstrumentSizes(inst)
-
-    const pips = calcPips({ instrument: inst, direction, entry, exit })
-
-    const points =
-      sizes.kind === "METAL"
-        ? calcPoints({ instrument: inst, direction, entry, exit })
-        : null
-
-    const slNum = stopLoss ? Number(stopLoss) : undefined
-    const r = calcRMultiple({
-      direction,
-      entry,
-      exit,
-      stopLoss: stopLoss ? Number(stopLoss) : undefined,
-    })
-
-    let slWarning: string | null = null
-    if (slNum !== undefined && Number.isFinite(slNum)) {
-      if (direction === "BUY" && slNum >= entry) {
-        slWarning = "For BUY, Stop Loss should be below Entry."
-      }
-      if (direction === "SELL" && slNum <= entry) {
-        slWarning = "For SELL, Stop Loss should be above Entry."
-      }
-    }
-
-    return { pips, points, r, slWarning, sizes }
-  }, [instrument, direction, entryPrice, exitPrice, stopLoss])
-
-  async function handleSave() {
-    setError(null)
-
-    const entry = Number(entryPrice)
-    const exit = Number(exitPrice)
-    const sl = stopLoss ? Number(stopLoss) : undefined
-    const tp = takeProfit ? Number(takeProfit) : undefined
-
-    if (!instrument.trim()) return setError("Instrument is required.")
-    if (!Number.isFinite(entry) || !Number.isFinite(exit)) {
-      return setError("Entry and Exit must be valid numbers.")
-    }
-    if (sl !== undefined && !Number.isFinite(sl)) return setError("Stop Loss must be a valid number.")
-    if (tp !== undefined && !Number.isFinite(tp)) return setError("Take Profit must be a valid number.")
-
-    setSaving(true)
     try {
-      const nowIso = new Date().toISOString()
-      const instrumentClean = instrument.trim().toUpperCase()
-      const strategyClean = strategy.trim()
+      const id = trade?.id ?? crypto.randomUUID();
+      const createdAt = trade?.createdAt ?? isoNow();
+      const updatedAt = isoNow();
 
-      const pips = calcPips({ instrument: instrumentClean, direction, entry, exit })
-      const rMultiple = calcRMultiple({ direction, entry, exit, stopLoss: sl })
+      // NEW: workspace-aware save
+      const wsId = trade?.workspaceId ?? activeWorkspaceId;
 
-      const common = {
-        instrument: instrumentClean,
-        strategy: strategyClean ? strategyClean : undefined,
+      const cleanInstrument = instrument.trim().toUpperCase();
+      if (!cleanInstrument) {
+        setErr("Instrument is required.");
+        setSaving(false);
+        return;
+      }
+
+      const { pips, rMultiple } = computePipsAndR({
+        instrument: cleanInstrument,
         direction,
-        openTime: toIsoFromDatetimeLocal(openTime),
-        closeTime: toIsoFromDatetimeLocal(closeTime),
-        entryPrice: entry,
-        exitPrice: exit,
-        stopLoss: sl,
-        takeProfit: tp,
-        tags: tags
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean),
-        notes: notes.trim() || undefined,
+        entryPrice: Number(entryPrice),
+        exitPrice: Number(exitPrice),
+        stopLoss,
+      });
+
+      const toSave: Trade = {
+        id,
+        workspaceId: wsId,
+
+        instrument: cleanInstrument,
+        strategy: strategy.trim() ? strategy.trim() : undefined,
+        direction,
+
+        openTime: fromLocalInput(openTime),
+        closeTime: fromLocalInput(closeTime),
+
+        entryPrice: Number(entryPrice),
+        exitPrice: Number(exitPrice),
+        stopLoss: stopLoss === undefined ? undefined : Number(stopLoss),
+        takeProfit: takeProfit === undefined ? undefined : Number(takeProfit),
+
+        tags: parseTags(tagsText),
+        notes: notes.trim() ? notes.trim() : undefined,
+
         pips,
         rMultiple,
-        updatedAt: nowIso,
-      } as const
 
-      if (mode === "add") {
-        const id = crypto.randomUUID()
-        const newTrade: Trade = { id, ...common, createdAt: nowIso }
-        await db.trades.add(newTrade)
-      } else {
-        if (!trade) throw new Error("Missing trade in edit mode.")
-        const updatedTrade: Trade = { ...trade, ...common }
-        await db.trades.put(updatedTrade)
-      }
+        createdAt,
+        updatedAt,
 
-      onOpenChange(false)
-    } catch (e) {
-      console.error(e)
-      setError("Could not save trade. Check console for details.")
+        // NEW: soft delete field (keep as null unless deleted)
+        deletedAt: trade?.deletedAt ?? null,
+      };
+
+      await db.trades.put(toSave);
+      onOpenChange(false);
+    } catch (e: any) {
+      console.warn(e);
+      setErr(e?.message ?? "Failed to save trade.");
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{mode === "add" ? "Add trade" : "Edit trade"}</DialogTitle>
-          <DialogDescription>
-            Log quickly. You can refine later.
-          </DialogDescription>
+          <DialogTitle>{isEdit ? "Edit trade" : "Add trade"}</DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label>Instrument</Label>
-            <InstrumentSelect value={instrument} onChange={setInstrument} />
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Instrument</div>
+
+            {/* Bring back your dropdown+favorites.
+                If for some reason the import fails, we fall back to an Input so the app doesn't crash. */}
+            {InstrumentSelectAny ? (
+              <InstrumentSelectAny
+                value={instrument}
+                onValueChange={(v: string) => setInstrument(v)}
+                onChange={(v: string) => setInstrument(v)}
+                onSelect={(v: string) => setInstrument(v)}
+              />
+            ) : (
+              <Input
+                value={instrument}
+                onChange={(e) => setInstrument(e.target.value)}
+                placeholder="XAUUSD"
+              />
+            )}
           </div>
 
-          <div className="space-y-2">
-            <Label>Strategy (optional)</Label>
-            <Input value={strategy} onChange={(e) => setStrategy(e.target.value)} placeholder="NY Breakout" />
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Strategy</div>
+            <Input
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value)}
+              placeholder="NY Breakout"
+            />
           </div>
 
-          <div className="space-y-2">
-            <Label>Direction</Label>
-            <Select value={direction} onValueChange={(v) => setDirection(v as TradeDirection)}>
-              <SelectTrigger><SelectValue placeholder="Select direction" /></SelectTrigger>
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Direction</div>
+            <Select value={direction} onValueChange={(v) => setDirection(v as any)}>
+              <SelectTrigger>
+                <SelectValue placeholder="BUY" />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="BUY">BUY</SelectItem>
                 <SelectItem value="SELL">SELL</SelectItem>
@@ -243,72 +301,94 @@ export function TradeFormDialog(props: {
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <Label>Open time</Label>
-            <Input type="datetime-local" value={openTime} onChange={(e) => setOpenTime(e.target.value)} />
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Open time</div>
+            <Input
+              type="datetime-local"
+              value={openTime}
+              onChange={(e) => setOpenTime(e.target.value)}
+            />
           </div>
 
-          <div className="space-y-2">
-            <Label>Close time</Label>
-            <Input type="datetime-local" value={closeTime} onChange={(e) => setCloseTime(e.target.value)} />
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Close time</div>
+            <Input
+              type="datetime-local"
+              value={closeTime}
+              onChange={(e) => setCloseTime(e.target.value)}
+            />
           </div>
 
-          <div className="space-y-2">
-            <Label>Entry</Label>
-            <Input value={entryPrice} onChange={(e) => setEntryPrice(e.target.value)} placeholder="e.g., 1.08750 / 4007.75" />
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Entry price</div>
+            <Input
+              type="number"
+              value={entryPrice}
+              onChange={(e) => setEntryPrice(Number(e.target.value))}
+            />
           </div>
 
-          <div className="space-y-2">
-            <Label>Exit</Label>
-            <Input value={exitPrice} onChange={(e) => setExitPrice(e.target.value)} placeholder="e.g., 1.08910 / 4006.77" />
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Exit price</div>
+            <Input
+              type="number"
+              value={exitPrice}
+              onChange={(e) => setExitPrice(Number(e.target.value))}
+            />
           </div>
 
-          <div className="space-y-2">
-            <Label>Stop loss (optional)</Label>
-            <Input value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder="..." />
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Stop loss</div>
+            <Input
+              type="number"
+              value={stopLoss ?? ""}
+              onChange={(e) =>
+                setStopLoss(e.target.value === "" ? undefined : Number(e.target.value))
+              }
+            />
           </div>
 
-          <div className="space-y-2">
-            <Label>Take profit (optional)</Label>
-            <Input value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} placeholder="..." />
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Take profit</div>
+            <Input
+              type="number"
+              value={takeProfit ?? ""}
+              onChange={(e) =>
+                setTakeProfit(e.target.value === "" ? undefined : Number(e.target.value))
+              }
+            />
           </div>
 
-          <div className="space-y-2 sm:col-span-2">
-            <Label>Tags (comma separated)</Label>
-            <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="london, breakout, A+ setup" />
+          <div className="space-y-1 md:col-span-2">
+            <div className="text-xs text-muted-foreground">Tags (comma separated)</div>
+            <Input
+              value={tagsText}
+              onChange={(e) => setTagsText(e.target.value)}
+              placeholder="breakout, london"
+            />
           </div>
 
-          <div className="space-y-2 sm:col-span-2">
-            <Label>Notes</Label>
-            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What happened? What to improve?" />
+          <div className="space-y-1 md:col-span-2">
+            <div className="text-xs text-muted-foreground">Notes</div>
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="What happened?"
+            />
           </div>
         </div>
 
-        <div className="text-sm text-muted-foreground">
-          Preview:{" "}
-          {preview ? (
-            <span className="font-medium text-foreground">
-              {preview.pips} pips
-              {preview.points !== null ? ` (${preview.points} points)` : ""}
-              {preview.r !== undefined ? ` • ${preview.r}R` : ""}
-            </span>
-          ) : (
-            <span>Enter Entry + Exit to see pips.</span>
-          )}
-        </div>
-
-        {preview?.slWarning ? (
-          <div className="text-sm text-amber-600">{preview.slWarning}</div>
-        ) : null}
-
-        {error ? <div className="text-sm text-red-600">{error}</div> : null}
+        {err ? <div className="text-sm text-red-600">{err}</div> : null}
 
         <DialogFooter>
-          <Button onClick={handleSave} disabled={saving}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={() => void onSave()} disabled={saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

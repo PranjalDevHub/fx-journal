@@ -1,12 +1,10 @@
-"use client"
+"use client";
 
-import { useMemo } from "react"
-import { useLiveQuery } from "dexie-react-hooks"
-import { db } from "@/lib/db"
-import { buildHourWeekdayHeatmap, calcSessionStats } from "@/lib/time-analytics"
+import React, { useMemo } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db, type Trade } from "@/lib/db";
+import { useWorkspace } from "@/components/workspace-provider";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { TimeHeatmap } from "@/components/time-heatmap"
 import {
   Table,
   TableBody,
@@ -14,130 +12,162 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "@/components/ui/table";
+
+function getR(t: Trade): number | null {
+  return typeof t.rMultiple === "number" && Number.isFinite(t.rMultiple) ? t.rMultiple : null;
+}
+
+function hourUtc(iso: string) {
+  const d = new Date(iso);
+  return d.getUTCHours(); // 0..23
+}
+
+function weekdayUtc(iso: string) {
+  const d = new Date(iso);
+  return d.getUTCDay(); // 0=Sun..6=Sat
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function sessionNameByHour(h: number) {
+  // simple UTC sessions
+  if (h >= 0 && h < 7) return "Asia";
+  if (h >= 7 && h < 12) return "London";
+  if (h >= 12 && h < 17) return "New York";
+  return "After-hours";
+}
 
 export default function TimePage() {
-  const trades = useLiveQuery(() => db.trades.toArray(), [])
+  const { activeWorkspaceId } = useWorkspace();
+
+  const trades = useLiveQuery(async () => {
+    const rows = await db.trades
+      .where("workspaceId")
+      .equals(activeWorkspaceId)
+      .and((t) => !t.deletedAt)
+      .toArray();
+    return rows;
+  }, [activeWorkspaceId]);
+
+  const safeTrades = trades ?? [];
 
   const sessionStats = useMemo(() => {
-    if (!trades) return null
-    return calcSessionStats(trades, 5)
-  }, [trades])
+    const map = new Map<string, { n: number; wins: number; sumR: number }>();
+
+    for (const t of safeTrades) {
+      const r = getR(t);
+      if (r === null) continue;
+      const s = sessionNameByHour(hourUtc(t.openTime));
+      if (!map.has(s)) map.set(s, { n: 0, wins: 0, sumR: 0 });
+      const obj = map.get(s)!;
+      obj.n += 1;
+      obj.sumR += r;
+      if (r > 0) obj.wins += 1;
+    }
+
+    const out = Array.from(map.entries()).map(([session, v]) => ({
+      session,
+      trades: v.n,
+      winRate: v.n ? (v.wins / v.n) * 100 : 0,
+      avgR: v.n ? v.sumR / v.n : 0,
+    }));
+
+    out.sort((a, b) => b.avgR - a.avgR);
+    return out;
+  }, [safeTrades]);
 
   const heatmap = useMemo(() => {
-    if (!trades) return null
-    return buildHourWeekdayHeatmap(trades, 2)
-  }, [trades])
+    // [weekday][hour] -> {sumR, n}
+    const grid = Array.from({ length: 7 }, () =>
+      Array.from({ length: 24 }, () => ({ sumR: 0, n: 0 }))
+    );
+
+    for (const t of safeTrades) {
+      const r = getR(t);
+      if (r === null) continue;
+      const wd = weekdayUtc(t.openTime);
+      const hr = hourUtc(t.openTime);
+      grid[wd][hr].sumR += r;
+      grid[wd][hr].n += 1;
+    }
+
+    return grid.map((row) =>
+      row.map((cell) => (cell.n ? Math.round((cell.sumR / cell.n) * 100) / 100 : null))
+    );
+  }, [safeTrades]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Time analysis</h1>
-        <p className="text-sm text-muted-foreground">
-          Discover your best sessions, hours, and days (based on R). Times are grouped by <span className="font-medium text-foreground">UTC</span>.
-        </p>
+        <p className="text-sm text-muted-foreground">Grouped by UTC. Workspace-aware.</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Best hour (UTC)</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">
-            {!heatmap?.bestHourUtc ? "—" : `${String(heatmap.bestHourUtc.hour).padStart(2, "0")}:00`}
-            <div className="mt-1 text-sm font-normal text-muted-foreground">
-              {!heatmap?.bestHourUtc
-                ? "Need more trades."
-                : `Avg ${heatmap.bestHourUtc.avgR}R • n=${heatmap.bestHourUtc.n}`}
-            </div>
-          </CardContent>
-        </Card>
+      <div className="rounded-xl border">
+        <div className="p-4 text-sm font-medium">Session stats (UTC)</div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Session</TableHead>
+              <TableHead className="text-right">Trades</TableHead>
+              <TableHead className="text-right">Win rate</TableHead>
+              <TableHead className="text-right">Avg R</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sessionStats.map((s) => (
+              <TableRow key={s.session}>
+                <TableCell className="font-medium">{s.session}</TableCell>
+                <TableCell className="text-right">{s.trades}</TableCell>
+                <TableCell className="text-right">{s.winRate.toFixed(1)}%</TableCell>
+                <TableCell className="text-right">{s.avgR.toFixed(2)}</TableCell>
+              </TableRow>
+            ))}
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Best weekday</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">
-            {!heatmap?.bestWeekday ? "—" : heatmap.bestWeekday.weekday}
-            <div className="mt-1 text-sm font-normal text-muted-foreground">
-              {!heatmap?.bestWeekday
-                ? "Need more trades."
-                : `Avg ${heatmap.bestWeekday.avgR}R • n=${heatmap.bestWeekday.n}`}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Trades with R</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">
-            {trades ? trades.filter((t) => typeof t.rMultiple === "number").length : "…"}
-            <div className="mt-1 text-sm font-normal text-muted-foreground">
-              Only trades with Stop Loss can compute R.
-            </div>
-          </CardContent>
-        </Card>
+            {sessionStats.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+                  Not enough data (need trades with Stop Loss so R can be calculated).
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Best sessions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!sessionStats ? (
-            <div className="text-sm text-muted-foreground">Loading…</div>
-          ) : sessionStats.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              Add at least <span className="font-medium text-foreground">5 trades with R</span> per session to see stats.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Session (UTC)</TableHead>
-                  <TableHead className="text-right">Trades</TableHead>
-                  <TableHead className="text-right">Win %</TableHead>
-                  <TableHead className="text-right">Expectancy (R)</TableHead>
-                  <TableHead className="text-right">Total R</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sessionStats.map((s) => (
-                  <TableRow key={s.session}>
-                    <TableCell className="font-medium">{s.session}</TableCell>
-                    <TableCell className="text-right">{s.n}</TableCell>
-                    <TableCell className="text-right">
-                      {s.winRatePct === null ? "—" : `${s.winRatePct}%`}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {s.expectancyR === null ? "—" : s.expectancyR}
-                    </TableCell>
-                    <TableCell className="text-right">{s.totalR}</TableCell>
-                  </TableRow>
+      <div className="rounded-xl border p-4 space-y-3">
+        <div className="text-sm font-medium">Hour × Weekday heatmap (Avg R)</div>
+        <div className="overflow-auto">
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr>
+                <th className="border p-2 text-left">UTC</th>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <th key={h} className="border p-2 text-center">
+                    {h}
+                  </th>
                 ))}
-              </TableBody>
-            </Table>
-          )}
-
-          <div className="mt-3 text-xs text-muted-foreground">
-            Sessions are approximations (UTC): Asia (22–06), London (07–12), Overlap (13–16), New York (17–21).
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Hour × weekday heatmap (Avg R)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!heatmap ? (
-            <div className="text-sm text-muted-foreground">Loading…</div>
-          ) : (
-            <TimeHeatmap cells={heatmap.cells} />
-          )}
-        </CardContent>
-      </Card>
+              </tr>
+            </thead>
+            <tbody>
+              {WEEKDAYS.map((wd, i) => (
+                <tr key={wd}>
+                  <td className="border p-2 font-medium">{wd}</td>
+                  {heatmap[i].map((v, h) => (
+                    <td key={h} className="border p-2 text-center">
+                      {v === null ? "-" : v.toFixed(2)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Cells show Avg R for trades opened at that UTC hour.
+        </div>
+      </div>
     </div>
-  )
+  );
 }

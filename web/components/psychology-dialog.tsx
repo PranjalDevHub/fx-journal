@@ -1,231 +1,204 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react"
-import { useLiveQuery } from "dexie-react-hooks"
-import { db, type PsychPhase, type PsychSnapshot, type Trade } from "@/lib/db"
+import React, { useEffect, useMemo, useState } from "react";
+import type { PsychSnapshot, Trade } from "@/lib/db";
+import { db } from "@/lib/db";
 
-import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Slider } from "@/components/ui/slider"
-import { Textarea } from "@/components/ui/textarea"
-import { Label } from "@/components/ui/label"
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Slider } from "@/components/ui/slider";
+import { Separator } from "@/components/ui/separator";
 
-function defaultSnap(tradeId: string, phase: PsychPhase): PsychSnapshot {
-  const now = new Date().toISOString()
-  return {
-    id: crypto.randomUUID(),
-    tradeId,
-    phase,
-    confidence: 2,
-    stress: 2,
-    fomo: 0,
-    revenge: 0,
-    discipline: 2,
-    note: "",
-    createdAt: now,
-    updatedAt: now,
-  }
+type Phase = "BEFORE" | "DURING" | "AFTER";
+
+type Props = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  trade: Trade;
+};
+
+function isoNow() {
+  return new Date().toISOString();
 }
 
-function SliderRow(props: {
-  label: string
-  value: number
-  onChange: (v: number) => void
-  hint?: string
-}) {
-  const { label, value, onChange, hint } = props
+type FormState = {
+  confidence: number;
+  stress: number;
+  fomo: number;
+  revenge: number;
+  discipline: number;
+  note: string;
+};
+
+const defaultState: FormState = {
+  confidence: 2,
+  stress: 2,
+  fomo: 2,
+  revenge: 0,
+  discipline: 2,
+  note: "",
+};
+
+async function loadSnapshot(tradeId: string, phase: Phase) {
+  // Using the compound index [tradeId+phase]
+  const row = await db.psychSnapshots.where("[tradeId+phase]").equals([tradeId, phase]).first();
+  return row ?? null;
+}
+
+function sliderRow(
+  label: string,
+  value: number,
+  setValue: (v: number) => void
+) {
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <Label>{label}</Label>
-        <div className="text-sm text-muted-foreground">{value}</div>
+      <div className="flex items-center justify-between text-sm">
+        <div>{label}</div>
+        <div className="text-muted-foreground">{value}</div>
       </div>
       <Slider
         value={[value]}
         min={0}
         max={4}
         step={1}
-        onValueChange={(arr) => onChange(arr[0] ?? 0)}
+        onValueChange={(v) => setValue(v[0] ?? 0)}
       />
-      {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
     </div>
-  )
+  );
 }
 
-export function PsychologyDialog(props: {
-  trade: Trade
-  open: boolean
-  onOpenChange: (open: boolean) => void
-}) {
-  const { trade, open, onOpenChange } = props
-  const tradeId = trade.id
+export function PsychologyDialog({ open, onOpenChange, trade }: Props) {
+  const phases: Phase[] = useMemo(() => ["BEFORE", "DURING", "AFTER"], []);
 
-  const snaps = useLiveQuery(
-    () => db.psychSnapshots.where("tradeId").equals(tradeId).toArray(),
-    [tradeId]
-  )
+  const [phase, setPhase] = useState<Phase>("BEFORE");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const snapMap = useMemo(() => {
-    const m = new Map<PsychPhase, PsychSnapshot>()
-    for (const s of snaps ?? []) m.set(s.phase, s)
-    return m
-  }, [snaps])
+  const [snapshotId, setSnapshotId] = useState<string | null>(null);
+  const [state, setState] = useState<FormState>(defaultState);
 
-  const [activeTab, setActiveTab] = useState<PsychPhase>("BEFORE")
-
-  const [before, setBefore] = useState<PsychSnapshot>(() => defaultSnap(tradeId, "BEFORE"))
-  const [during, setDuring] = useState<PsychSnapshot>(() => defaultSnap(tradeId, "DURING"))
-  const [after, setAfter] = useState<PsychSnapshot>(() => defaultSnap(tradeId, "AFTER"))
-
-  const [saving, setSaving] = useState(false)
-
-  // Load existing snapshots into state when dialog opens
   useEffect(() => {
-    if (!open) return
-    setActiveTab("BEFORE")
+    if (!open) return;
 
-    const b = snapMap.get("BEFORE") ?? defaultSnap(tradeId, "BEFORE")
-    const d = snapMap.get("DURING") ?? defaultSnap(tradeId, "DURING")
-    const a = snapMap.get("AFTER") ?? defaultSnap(tradeId, "AFTER")
+    setPhase("BEFORE");
+    setSnapshotId(null);
+    setState(defaultState);
+  }, [open]);
 
-    setBefore(b)
-    setDuring(d)
-    setAfter(a)
-  }, [open, snapMap, tradeId])
+  useEffect(() => {
+    if (!open) return;
 
-  async function saveAll() {
-    setSaving(true)
+    (async () => {
+      setLoading(true);
+      const row = await loadSnapshot(trade.id, phase);
+
+      if (row) {
+        setSnapshotId(row.id);
+        setState({
+          confidence: row.confidence,
+          stress: row.stress,
+          fomo: row.fomo,
+          revenge: row.revenge,
+          discipline: row.discipline,
+          note: row.note ?? "",
+        });
+      } else {
+        setSnapshotId(null);
+        setState(defaultState);
+      }
+
+      setLoading(false);
+    })();
+  }, [open, trade.id, phase]);
+
+  async function save() {
+    setSaving(true);
+
     try {
-      const now = new Date().toISOString()
+      const id = snapshotId ?? crypto.randomUUID();
+      const stamp = isoNow();
 
-      const b: PsychSnapshot = { ...before, updatedAt: now, note: before.note?.trim() || "" }
-      const d: PsychSnapshot = { ...during, updatedAt: now, note: during.note?.trim() || "" }
-      const a: PsychSnapshot = { ...after, updatedAt: now, note: after.note?.trim() || "" }
+      const existing = snapshotId
+        ? await db.psychSnapshots.get(id)
+        : null;
 
-      // upsert by primary key (id)
-      await db.psychSnapshots.put(b)
-      await db.psychSnapshots.put(d)
-      await db.psychSnapshots.put(a)
+      const toSave: PsychSnapshot = {
+        id,
+        workspaceId: trade.workspaceId, // IMPORTANT: same workspace as trade
+        tradeId: trade.id,
+        phase,
 
-      onOpenChange(false)
+        confidence: state.confidence,
+        stress: state.stress,
+        fomo: state.fomo,
+        revenge: state.revenge,
+        discipline: state.discipline,
+
+        note: state.note.trim() ? state.note.trim() : undefined,
+
+        createdAt: existing?.createdAt ?? stamp,
+        updatedAt: stamp,
+        deletedAt: existing?.deletedAt ?? null,
+      };
+
+      await db.psychSnapshots.put(toSave);
+      setSnapshotId(id);
+      onOpenChange(false);
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
-  const headerSubtitle = `${trade.instrument} • ${trade.direction} • ${typeof trade.rMultiple === "number" ? `${trade.rMultiple}R` : "R —"}`
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Psychology</DialogTitle>
-          <div className="text-sm text-muted-foreground">{headerSubtitle}</div>
+          <DialogTitle>Psychology — {trade.instrument}</DialogTitle>
         </DialogHeader>
 
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as PsychPhase)}>
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="BEFORE">Before</TabsTrigger>
-            <TabsTrigger value="DURING">During</TabsTrigger>
-            <TabsTrigger value="AFTER">After</TabsTrigger>
-          </TabsList>
+        <div className="flex flex-wrap gap-2">
+          {phases.map((p) => (
+            <Button
+              key={p}
+              variant={phase === p ? "default" : "outline"}
+              size="sm"
+              onClick={() => setPhase(p)}
+              disabled={loading || saving}
+            >
+              {p}
+            </Button>
+          ))}
+        </div>
 
-          <TabsContent value="BEFORE" className="mt-4 space-y-4">
-            <SliderRow
-              label="Confidence"
-              value={before.confidence}
-              onChange={(v) => setBefore((s) => ({ ...s, confidence: v }))}
-              hint="0 = no confidence, 4 = very confident"
-            />
-            <SliderRow
-              label="FOMO"
-              value={before.fomo}
-              onChange={(v) => setBefore((s) => ({ ...s, fomo: v }))}
-              hint="0 = calm/neutral, 4 = very strong urge to chase"
-            />
-            <SliderRow
-              label="Revenge"
-              value={before.revenge}
-              onChange={(v) => setBefore((s) => ({ ...s, revenge: v }))}
-              hint="0 = none, 4 = trading to get money back"
-            />
-            <SliderRow
-              label="Discipline"
-              value={before.discipline}
-              onChange={(v) => setBefore((s) => ({ ...s, discipline: v }))}
-              hint="0 = impulsive, 4 = followed plan"
-            />
-            <div className="space-y-2">
-              <Label>Note</Label>
-              <Textarea
-                value={before.note ?? ""}
-                onChange={(e) => setBefore((s) => ({ ...s, note: e.target.value }))}
-                placeholder="What was your mindset before entering?"
-              />
-            </div>
-          </TabsContent>
+        <Separator />
 
-          <TabsContent value="DURING" className="mt-4 space-y-4">
-            <SliderRow
-              label="Stress"
-              value={during.stress}
-              onChange={(v) => setDuring((s) => ({ ...s, stress: v }))}
-              hint="0 = relaxed, 4 = highly stressed"
-            />
-            <SliderRow
-              label="FOMO"
-              value={during.fomo}
-              onChange={(v) => setDuring((s) => ({ ...s, fomo: v }))}
-            />
-            <SliderRow
-              label="Revenge"
-              value={during.revenge}
-              onChange={(v) => setDuring((s) => ({ ...s, revenge: v }))}
-            />
-            <SliderRow
-              label="Discipline"
-              value={during.discipline}
-              onChange={(v) => setDuring((s) => ({ ...s, discipline: v }))}
-            />
-            <div className="space-y-2">
-              <Label>Note</Label>
-              <Textarea
-                value={during.note ?? ""}
-                onChange={(e) => setDuring((s) => ({ ...s, note: e.target.value }))}
-                placeholder="Did you feel tempted to interfere? Move SL? Close early?"
-              />
-            </div>
-          </TabsContent>
+        <div className="space-y-4">
+          {sliderRow("Confidence", state.confidence, (v) => setState((s) => ({ ...s, confidence: v })))}
+          {sliderRow("Stress", state.stress, (v) => setState((s) => ({ ...s, stress: v })))}
+          {sliderRow("FOMO", state.fomo, (v) => setState((s) => ({ ...s, fomo: v })))}
+          {sliderRow("Revenge", state.revenge, (v) => setState((s) => ({ ...s, revenge: v })))}
+          {sliderRow("Discipline", state.discipline, (v) => setState((s) => ({ ...s, discipline: v })))}
 
-          <TabsContent value="AFTER" className="mt-4 space-y-4">
-            <SliderRow
-              label="Discipline"
-              value={after.discipline}
-              onChange={(v) => setAfter((s) => ({ ...s, discipline: v }))}
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Note</div>
+            <Textarea
+              value={state.note}
+              onChange={(e) => setState((s) => ({ ...s, note: e.target.value }))}
+              placeholder="What were you feeling?"
             />
-            <SliderRow
-              label="Stress"
-              value={after.stress}
-              onChange={(v) => setAfter((s) => ({ ...s, stress: v }))}
-            />
-            <div className="space-y-2">
-              <Label>Reflection</Label>
-              <Textarea
-                value={after.note ?? ""}
-                onChange={(e) => setAfter((s) => ({ ...s, note: e.target.value }))}
-                placeholder="What went well? What would you do differently?"
-              />
-            </div>
-          </TabsContent>
-        </Tabs>
+          </div>
+        </div>
 
         <DialogFooter>
-          <Button onClick={saveAll} disabled={saving}>
-            {saving ? "Saving..." : "Save psychology"}
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={() => void save()} disabled={saving}>
+            {saving ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

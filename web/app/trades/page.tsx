@@ -1,25 +1,20 @@
-"use client"
+"use client";
 
-import { useMemo, useState } from "react"
-import { useLiveQuery } from "dexie-react-hooks"
-import { db, type TradeDirection } from "@/lib/db"
+import React, { useMemo, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 
-import { TradeFormDialog } from "@/components/trade-form-dialog"
-import { TradeActions } from "@/components/trade-actions"
+import { db, type Trade } from "@/lib/db";
+import { useWorkspace } from "@/components/workspace-provider";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -27,212 +22,199 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 
-function fmtDate(iso: string) {
-  return new Date(iso).toLocaleString()
+import { TradeFormDialog } from "@/components/trade-form-dialog";
+import { TradeActions } from "@/components/trade-actions";
+
+function formatDate(iso: string) {
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
 }
 
-type DirFilter = "ALL" | TradeDirection
+function num(n: unknown) {
+  const x = Number(n);
+  return Number.isFinite(x) ? x : 0;
+}
 
 export default function TradesPage() {
-  const trades = useLiveQuery(
-    () => db.trades.orderBy("closeTime").reverse().toArray(),
-    []
-  )
+  const { activeWorkspaceId } = useWorkspace();
 
-  const [openAdd, setOpenAdd] = useState(false)
+  const [addOpen, setAddOpen] = useState(false);
 
   // Filters
-  const [instrumentFilter, setInstrumentFilter] = useState("")
-  const [strategyFilter, setStrategyFilter] = useState("")
-  const [directionFilter, setDirectionFilter] = useState<DirFilter>("ALL")
-  const [tagFilter, setTagFilter] = useState("")
+  const [instrumentFilter, setInstrumentFilter] = useState("");
+  const [strategyFilter, setStrategyFilter] = useState("");
+  const [directionFilter, setDirectionFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
+  const [tagContains, setTagContains] = useState("");
 
-  const filteredTrades = useMemo(() => {
-    if (!trades) return null
+  const trades = useLiveQuery(async () => {
+    const rows = await db.trades
+      .where("workspaceId")
+      .equals(activeWorkspaceId)
+      .and((t) => !t.deletedAt)
+      .toArray();
 
-    const inst = instrumentFilter.trim().toUpperCase()
-    const strat = strategyFilter.trim().toLowerCase()
-    const tag = tagFilter.trim().toLowerCase()
+    // newest first
+    rows.sort((a, b) => b.closeTime.localeCompare(a.closeTime));
+    return rows;
+  }, [activeWorkspaceId]);
 
-    return trades.filter((t) => {
-      if (inst && !t.instrument.toUpperCase().includes(inst)) return false
-      if (directionFilter !== "ALL" && t.direction !== directionFilter) return false
+  const filtered = useMemo(() => {
+    const rows = trades ?? [];
 
-      const s = (t.strategy ?? "").toLowerCase()
-      if (strat && !s.includes(strat)) return false
+    const inst = instrumentFilter.trim().toLowerCase();
+    const strat = strategyFilter.trim().toLowerCase();
+    const tag = tagContains.trim().toLowerCase();
 
-      const tags = (t.tags ?? []).map((x) => x.toLowerCase())
-      if (tag && !tags.some((x) => x.includes(tag))) return false
-
-      return true
-    })
-  }, [trades, instrumentFilter, strategyFilter, directionFilter, tagFilter])
+    return rows.filter((t) => {
+      if (inst && !t.instrument.toLowerCase().includes(inst)) return false;
+      if (strat && !(t.strategy ?? "").toLowerCase().includes(strat)) return false;
+      if (directionFilter !== "ALL" && t.direction !== directionFilter) return false;
+      if (tag) {
+        const tags = t.tags ?? [];
+        const ok = tags.some((x) => String(x).toLowerCase().includes(tag));
+        if (!ok) return false;
+      }
+      return true;
+    });
+  }, [trades, instrumentFilter, strategyFilter, directionFilter, tagContains]);
 
   function clearFilters() {
-    setInstrumentFilter("")
-    setStrategyFilter("")
-    setDirectionFilter("ALL")
-    setTagFilter("")
+    setInstrumentFilter("");
+    setStrategyFilter("");
+    setDirectionFilter("ALL");
+    setTagContains("");
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Trades</h1>
           <p className="text-sm text-muted-foreground">
-            Log and review trades (offline).
+            Workspace: {activeWorkspaceId === "local" ? "Local (offline)" : "Cloud"}
           </p>
         </div>
 
-        <Button onClick={() => setOpenAdd(true)}>Add trade</Button>
+        <Button onClick={() => setAddOpen(true)}>Add trade</Button>
       </div>
 
-      <TradeFormDialog mode="add" open={openAdd} onOpenChange={setOpenAdd} />
+      <div className="rounded-xl border p-4 space-y-4">
+        <div className="text-sm font-medium">Filters</div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Filters</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-            <div className="space-y-2">
-              <Label>Instrument</Label>
-              <Input
-                value={instrumentFilter}
-                onChange={(e) => setInstrumentFilter(e.target.value)}
-                placeholder="EURUSD"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Strategy</Label>
-              <Input
-                value={strategyFilter}
-                onChange={(e) => setStrategyFilter(e.target.value)}
-                placeholder="NY Breakout"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Direction</Label>
-              <Select
-                value={directionFilter}
-                onValueChange={(v) => setDirectionFilter(v as DirFilter)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="All" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">ALL</SelectItem>
-                  <SelectItem value="BUY">BUY</SelectItem>
-                  <SelectItem value="SELL">SELL</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Tag contains</Label>
-              <Input
-                value={tagFilter}
-                onChange={(e) => setTagFilter(e.target.value)}
-                placeholder="breakout"
-              />
-            </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Instrument</div>
+            <Input
+              value={instrumentFilter}
+              onChange={(e) => setInstrumentFilter(e.target.value)}
+              placeholder="EURUSD / XAUUSD..."
+            />
           </div>
 
-          <div className="mt-4 flex items-center justify-between gap-3">
-            <div className="text-sm text-muted-foreground">
-              Showing{" "}
-              <span className="font-medium text-foreground">
-                {filteredTrades ? filteredTrades.length : "…"}
-              </span>{" "}
-              of{" "}
-              <span className="font-medium text-foreground">
-                {trades ? trades.length : "…"}
-              </span>{" "}
-              trades
-            </div>
-
-            <Button variant="secondary" onClick={clearFilters}>
-              Clear filters
-            </Button>
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Strategy</div>
+            <Input
+              value={strategyFilter}
+              onChange={(e) => setStrategyFilter(e.target.value)}
+              placeholder="NY Breakout..."
+            />
           </div>
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Trade list</CardTitle>
-        </CardHeader>
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Direction</div>
+            <Select value={directionFilter} onValueChange={(v) => setDirectionFilter(v as any)}>
+              <SelectTrigger>
+                <SelectValue placeholder="ALL" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">ALL</SelectItem>
+                <SelectItem value="BUY">BUY</SelectItem>
+                <SelectItem value="SELL">SELL</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
-        <CardContent>
-          {!filteredTrades ? (
-            <div className="text-sm text-muted-foreground">Loading…</div>
-          ) : filteredTrades.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              No trades match your filters.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Close time</TableHead>
-                  <TableHead>Instrument</TableHead>
-                  <TableHead>Strategy</TableHead>
-                  <TableHead>Dir</TableHead>
-                  <TableHead className="text-right">Entry</TableHead>
-                  <TableHead className="text-right">Exit</TableHead>
-                  <TableHead className="text-right">Pips</TableHead>
-                  <TableHead className="text-right">R</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">Tag contains</div>
+            <Input
+              value={tagContains}
+              onChange={(e) => setTagContains(e.target.value)}
+              placeholder="breakout..."
+            />
+          </div>
+        </div>
 
-              <TableBody>
-                {filteredTrades.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell className="text-sm">{fmtDate(t.closeTime)}</TableCell>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm text-muted-foreground">
+            Showing <span className="font-medium text-foreground">{filtered.length}</span> of{" "}
+            <span className="font-medium text-foreground">{(trades ?? []).length}</span> trades
+          </div>
 
-                    <TableCell className="font-medium">{t.instrument}</TableCell>
+          <Button variant="secondary" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        </div>
+      </div>
 
-                    <TableCell className="text-sm">
-                      {t.strategy ? (
-                        <Badge variant="outline">{t.strategy}</Badge>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
+      <div className="rounded-xl border">
+        <div className="p-4 text-sm font-medium">Trade list</div>
 
-                    <TableCell>
-                      <Badge variant={t.direction === "BUY" ? "default" : "secondary"}>
-                        {t.direction}
-                      </Badge>
-                    </TableCell>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Close time</TableHead>
+              <TableHead>Instrument</TableHead>
+              <TableHead>Strategy</TableHead>
+              <TableHead>Dir</TableHead>
+              <TableHead className="text-right">Entry</TableHead>
+              <TableHead className="text-right">Exit</TableHead>
+              <TableHead className="text-right">Pips</TableHead>
+              <TableHead className="text-right">R</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
 
-                    <TableCell className="text-right">{t.entryPrice}</TableCell>
-                    <TableCell className="text-right">{t.exitPrice}</TableCell>
+          <TableBody>
+            {filtered.map((t: Trade) => (
+              <TableRow key={t.id}>
+                <TableCell>{formatDate(t.closeTime)}</TableCell>
+                <TableCell className="font-medium">{t.instrument}</TableCell>
+                <TableCell>
+                  {t.strategy ? <Badge variant="secondary">{t.strategy}</Badge> : null}
+                </TableCell>
+                <TableCell>
+                  <Badge variant={t.direction === "BUY" ? "default" : "outline"}>
+                    {t.direction}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right">{num(t.entryPrice).toFixed(2)}</TableCell>
+                <TableCell className="text-right">{num(t.exitPrice).toFixed(2)}</TableCell>
+                <TableCell className="text-right">{t.pips ?? "-"}</TableCell>
+                <TableCell className="text-right">{t.rMultiple ?? "-"}</TableCell>
+                <TableCell className="text-right">
+                  <TradeActions trade={t} />
+                </TableCell>
+              </TableRow>
+            ))}
 
-                    <TableCell className="text-right">
-                      <span className={typeof t.pips === "number" && t.pips < 0 ? "text-red-600" : ""}>
-                        {t.pips ?? "—"}
-                      </span>
-                    </TableCell>
+            {filtered.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-10">
+                  No trades found for this workspace / filters.
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
+      </div>
 
-                    <TableCell className="text-right">{t.rMultiple ?? "—"}</TableCell>
-
-                    <TableCell className="text-right">
-                      <TradeActions trade={t} />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      <TradeFormDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
-  )
+  );
 }
