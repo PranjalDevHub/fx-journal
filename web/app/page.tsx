@@ -10,8 +10,10 @@ import {
   calcWinRateR,
 } from "@/lib/metrics"
 import { calcStrategyStats } from "@/lib/strategy-analytics"
+import { generateBehaviorInsights } from "@/lib/behavior-insights"
 
 import { EquityCurve } from "@/components/equity-curve"
+import { WeeklyReview } from "@/components/weekly-review"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Table,
@@ -25,6 +27,7 @@ import { Badge } from "@/components/ui/badge"
 
 export default function DashboardPage() {
   const trades = useLiveQuery(() => db.trades.toArray(), [])
+  const snaps = useLiveQuery(() => db.psychSnapshots.toArray(), [])
 
   const winRate = trades ? calcWinRateR(trades) : null
   const expectancy = trades ? calcExpectancyR(trades) : null
@@ -37,15 +40,24 @@ export default function DashboardPage() {
 
   const strategyStats = useMemo(() => {
     if (!trades) return null
-    return calcStrategyStats(trades, 5) // minimum 5 trades per strategy
+    return calcStrategyStats(trades, 5)
   }, [trades])
+
+  const insights = useMemo(() => {
+    if (!trades || !snaps) return null
+    return generateBehaviorInsights({
+      trades,
+      snapshots: snaps,
+      lookbackDays: 30,
+    }).slice(0, 6) // keep it concise
+  }, [trades, snaps])
 
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">
-          Core performance metrics based on your logged trades.
+          Performance + behavior insights (no signals).
         </p>
       </div>
 
@@ -91,6 +103,20 @@ export default function DashboardPage() {
         </Card>
       </div>
 
+      {insights ? (
+        <WeeklyReview
+          title="Behavior insights (last 30 days)"
+          insights={insights}
+        />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Behavior insights</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">Loading…</CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">Equity Curve (R)</CardTitle>
@@ -113,8 +139,9 @@ export default function DashboardPage() {
             <div className="text-sm text-muted-foreground">Loading…</div>
           ) : strategyStats.length === 0 ? (
             <div className="text-sm text-muted-foreground">
-              Not enough data yet. Log at least <span className="font-medium text-foreground">5 trades with R</span> per
-              strategy to see reliable stats.
+              Not enough data yet. Log at least{" "}
+              <span className="font-medium text-foreground">5 trades with R</span>{" "}
+              per strategy to see reliable stats.
             </div>
           ) : (
             <Table>
@@ -163,8 +190,9 @@ export default function DashboardPage() {
           )}
 
           <div className="mt-3 text-xs text-muted-foreground">
-            Note: Strategy stats use only trades with valid <span className="text-foreground font-medium">R</span>.
-            Add Stop Loss to compute R reliably.
+            Strategy stats use only trades with valid{" "}
+            <span className="text-foreground font-medium">R</span>. Add Stop Loss
+            to compute R reliably.
           </div>
         </CardContent>
       </Card>
@@ -178,6 +206,11 @@ export default function DashboardPage() {
         Trades with R:{" "}
         <span className="font-medium text-foreground">
           {tradesWithRCount ?? "…"}
+        </span>
+        {" • "}
+        Psych snapshots:{" "}
+        <span className="font-medium text-foreground">
+          {snaps?.length ?? "…"}
         </span>
       </div>
     </div>
