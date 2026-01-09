@@ -1,36 +1,82 @@
+"use client"
+
+import { useLiveQuery } from "dexie-react-hooks"
+import { db } from "@/lib/db"
+import {
+  calcExpectancyR,
+  calcMaxDrawdownR,
+  calcProfitFactorR,
+  calcWinRateR,
+} from "@/lib/metrics"
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function DashboardPage() {
+  const trades = useLiveQuery(() => db.trades.toArray(), [])
+
+  const winRate = trades ? calcWinRateR(trades) : null
+  const expectancy = trades ? calcExpectancyR(trades) : null
+  const maxDD = trades ? calcMaxDrawdownR(trades) : null
+  const profitFactor = trades ? calcProfitFactorR(trades) : null
+
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">
-          Your journey overview (we’ll add equity curve + metrics next).
+          Core performance metrics based on your logged trades.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <Card>
           <CardHeader>
             <CardTitle className="text-sm">Win Rate</CardTitle>
           </CardHeader>
-          <CardContent className="text-2xl font-semibold">—</CardContent>
+          <CardContent className="text-2xl font-semibold">
+            {winRate === null ? "—" : `${winRate}%`}
+          </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
             <CardTitle className="text-sm">Expectancy (R)</CardTitle>
           </CardHeader>
-          <CardContent className="text-2xl font-semibold">—</CardContent>
+          <CardContent className="text-2xl font-semibold">
+            {expectancy === null ? "—" : expectancy}
+          </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Max Drawdown</CardTitle>
+            <CardTitle className="text-sm">Profit Factor</CardTitle>
           </CardHeader>
-          <CardContent className="text-2xl font-semibold">—</CardContent>
+          <CardContent className="text-2xl font-semibold">
+            {profitFactor === null
+              ? "—"
+              : profitFactor === Infinity
+                ? "∞"
+                : profitFactor}
+          </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Max Drawdown (R)</CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-semibold">
+            {maxDD === null ? "—" : maxDD}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="text-sm text-muted-foreground">
+        Total trades: <span className="text-foreground font-medium">{trades?.length ?? "…"}</span>
+        {" • "}
+        Trades with R:{" "}
+        <span className="text-foreground font-medium">
+          {trades ? trades.filter((t) => typeof t.rMultiple === "number").length : "…"}
+        </span>
       </div>
     </div>
   )
