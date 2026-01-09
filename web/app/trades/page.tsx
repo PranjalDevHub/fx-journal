@@ -6,7 +6,6 @@ import { db, type TradeDirection } from "@/lib/db"
 
 import { TradeFormDialog } from "@/components/trade-form-dialog"
 import { TradeActions } from "@/components/trade-actions"
-import { ScreenshotImportDialog } from "@/components/screenshot-import-dialog"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -43,7 +42,6 @@ export default function TradesPage() {
   )
 
   const [openAdd, setOpenAdd] = useState(false)
-  const [openImport, setOpenImport] = useState(false)
 
   // Filters
   const [instrumentFilter, setInstrumentFilter] = useState("")
@@ -85,20 +83,14 @@ export default function TradesPage() {
         <div>
           <h1 className="text-2xl font-semibold">Trades</h1>
           <p className="text-sm text-muted-foreground">
-            Add manually or import from MT4/MT5 screenshot (OCR).
+            Log and review trades (offline).
           </p>
         </div>
 
-        <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => setOpenImport(true)}>
-            Import screenshot
-          </Button>
-          <Button onClick={() => setOpenAdd(true)}>Add trade</Button>
-        </div>
+        <Button onClick={() => setOpenAdd(true)}>Add trade</Button>
       </div>
 
       <TradeFormDialog mode="add" open={openAdd} onOpenChange={setOpenAdd} />
-      <ScreenshotImportDialog open={openImport} onOpenChange={setOpenImport} />
 
       <Card>
         <CardHeader>

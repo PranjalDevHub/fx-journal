@@ -22,8 +22,6 @@ export type Trade = {
   pips?: number
   rMultiple?: number
 
-  screenshotId?: string // NEW: link to screenshot import
-
   createdAt: string
   updatedAt: string
 }
@@ -47,19 +45,9 @@ export type PsychSnapshot = {
   updatedAt: string
 }
 
-export type ScreenshotImport = {
-  id: string
-  image: Blob
-  mimeType: string
-  ocrText: string
-  extracted: Record<string, unknown>
-  createdAt: string
-}
-
 class FxJournalDB extends Dexie {
   trades!: Table<Trade, string>
   psychSnapshots!: Table<PsychSnapshot, string>
-  screenshots!: Table<ScreenshotImport, string>
 
   constructor() {
     super("fx-journal")
@@ -69,23 +57,29 @@ class FxJournalDB extends Dexie {
       trades: "id, instrument, direction, openTime, closeTime, createdAt",
     })
 
-    // v2 added strategy
+    // v2 added strategy index
     this.version(2).stores({
       trades: "id, instrument, direction, strategy, openTime, closeTime, createdAt",
     })
 
-    // v3 added psychology
+    // v3 added psychology snapshots
     this.version(3).stores({
       trades: "id, instrument, direction, strategy, openTime, closeTime, createdAt",
       psychSnapshots: "id, tradeId, phase, [tradeId+phase], createdAt",
     })
 
-    // v4 adds screenshots table + screenshotId on trade
+    // v4 previously added screenshots (we keep it here so existing DBs can upgrade safely)
     this.version(4).stores({
-      trades:
-        "id, instrument, direction, strategy, screenshotId, openTime, closeTime, createdAt",
+      trades: "id, instrument, direction, strategy, screenshotId, openTime, closeTime, createdAt",
       psychSnapshots: "id, tradeId, phase, [tradeId+phase], createdAt",
       screenshots: "id, createdAt",
+    })
+
+    // v5 removes screenshots feature completely
+    this.version(5).stores({
+      trades: "id, instrument, direction, strategy, openTime, closeTime, createdAt",
+      psychSnapshots: "id, tradeId, phase, [tradeId+phase], createdAt",
+      screenshots: null, // delete table + data
     })
   }
 }
