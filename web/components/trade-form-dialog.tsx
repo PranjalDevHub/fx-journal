@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { db, type Trade, type TradeDirection } from "@/lib/db"
-import { calcPips, calcRMultiple } from "@/lib/trade-math"
+import { calcPips, calcPoints, calcRMultiple, getInstrumentSizes } from "@/lib/trade-math"
 import { InstrumentSelect } from "@/components/instrument-select"
 
 import { Button } from "@/components/ui/button"
@@ -52,18 +52,6 @@ function toDatetimeLocalFromIso(iso: string) {
   const hh = pad(d.getHours())
   const min = pad(d.getMinutes())
   return `${yyyy}-${mm}-${dd}T${hh}:${min}`
-}
-
-function isFxPair(symbolRaw: string): boolean {
-  const s = symbolRaw.trim().toUpperCase()
-  if (s.length !== 6) return false
-  const base = s.slice(0, 3)
-  const quote = s.slice(3, 6)
-  const ccys = new Set([
-    "USD", "EUR", "JPY", "GBP", "AUD", "NZD", "CHF", "CAD",
-    "ZAR", "TRY", "SEK", "NOK", "MXN", "SGD", "HKD", "PLN",
-  ])
-  return ccys.has(base) && ccys.has(quote)
 }
 
 export function TradeFormDialog(props: {
@@ -130,27 +118,16 @@ export function TradeFormDialog(props: {
     if (!Number.isFinite(entry) || !Number.isFinite(exit)) return null
 
     const inst = instrument.trim().toUpperCase()
-    const looksFx = isFxPair(inst)
+    const sizes = getInstrumentSizes(inst)
 
-    const priceTooLargeForNonJpyFx =
-      looksFx && !inst.endsWith("JPY") && (entry > 20 || exit > 20)
-    const priceTooLargeForJpyFx =
-      looksFx && inst.endsWith("JPY") && (entry > 1000 || exit > 1000)
+    const pips = calcPips({ instrument: inst, direction, entry, exit })
 
-    const warning =
-      priceTooLargeForNonJpyFx || priceTooLargeForJpyFx
-        ? `These prices look too large for ${inst}. If this is Gold, choose XAUUSD (or correct the decimals).`
+    const points =
+      sizes.kind === "METAL"
+        ? calcPoints({ instrument: inst, direction, entry, exit })
         : null
 
-    const pips = calcPips({
-      instrument: inst,
-      direction,
-      entry,
-      exit,
-      entryRaw: entryPrice,
-      exitRaw: exitPrice,
-    })
-
+    const slNum = stopLoss ? Number(stopLoss) : undefined
     const r = calcRMultiple({
       direction,
       entry,
@@ -158,7 +135,17 @@ export function TradeFormDialog(props: {
       stopLoss: stopLoss ? Number(stopLoss) : undefined,
     })
 
-    return { pips, r, warning }
+    let slWarning: string | null = null
+    if (slNum !== undefined && Number.isFinite(slNum)) {
+      if (direction === "BUY" && slNum >= entry) {
+        slWarning = "For BUY, Stop Loss should be below Entry."
+      }
+      if (direction === "SELL" && slNum <= entry) {
+        slWarning = "For SELL, Stop Loss should be above Entry."
+      }
+    }
+
+    return { pips, points, r, slWarning, sizes }
   }, [instrument, direction, entryPrice, exitPrice, stopLoss])
 
   async function handleSave() {
@@ -182,15 +169,7 @@ export function TradeFormDialog(props: {
       const instrumentClean = instrument.trim().toUpperCase()
       const strategyClean = strategy.trim()
 
-      const pips = calcPips({
-        instrument: instrumentClean,
-        direction,
-        entry,
-        exit,
-        entryRaw: entryPrice,
-        exitRaw: exitPrice,
-      })
-
+      const pips = calcPips({ instrument: instrumentClean, direction, entry, exit })
       const rMultiple = calcRMultiple({ direction, entry, exit, stopLoss: sl })
 
       const common = {
@@ -238,9 +217,7 @@ export function TradeFormDialog(props: {
         <DialogHeader>
           <DialogTitle>{mode === "add" ? "Add trade" : "Edit trade"}</DialogTitle>
           <DialogDescription>
-            {mode === "add"
-              ? "Log quickly. You can refine later."
-              : "Fix details to keep analytics accurate."}
+            Log quickly. You can refine later.
           </DialogDescription>
         </DialogHeader>
 
@@ -252,19 +229,13 @@ export function TradeFormDialog(props: {
 
           <div className="space-y-2">
             <Label>Strategy (optional)</Label>
-            <Input
-              value={strategy}
-              onChange={(e) => setStrategy(e.target.value)}
-              placeholder="NY Breakout"
-            />
+            <Input value={strategy} onChange={(e) => setStrategy(e.target.value)} placeholder="NY Breakout" />
           </div>
 
           <div className="space-y-2">
             <Label>Direction</Label>
             <Select value={direction} onValueChange={(v) => setDirection(v as TradeDirection)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select direction" />
-              </SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Select direction" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="BUY">BUY</SelectItem>
                 <SelectItem value="SELL">SELL</SelectItem>
@@ -274,38 +245,22 @@ export function TradeFormDialog(props: {
 
           <div className="space-y-2">
             <Label>Open time</Label>
-            <Input
-              type="datetime-local"
-              value={openTime}
-              onChange={(e) => setOpenTime(e.target.value)}
-            />
+            <Input type="datetime-local" value={openTime} onChange={(e) => setOpenTime(e.target.value)} />
           </div>
 
           <div className="space-y-2">
             <Label>Close time</Label>
-            <Input
-              type="datetime-local"
-              value={closeTime}
-              onChange={(e) => setCloseTime(e.target.value)}
-            />
+            <Input type="datetime-local" value={closeTime} onChange={(e) => setCloseTime(e.target.value)} />
           </div>
 
           <div className="space-y-2">
             <Label>Entry</Label>
-            <Input
-              value={entryPrice}
-              onChange={(e) => setEntryPrice(e.target.value)}
-              placeholder="1.08750 / 2034.50"
-            />
+            <Input value={entryPrice} onChange={(e) => setEntryPrice(e.target.value)} placeholder="e.g., 1.08750 / 4007.75" />
           </div>
 
           <div className="space-y-2">
             <Label>Exit</Label>
-            <Input
-              value={exitPrice}
-              onChange={(e) => setExitPrice(e.target.value)}
-              placeholder="1.08910 / 2040.10"
-            />
+            <Input value={exitPrice} onChange={(e) => setExitPrice(e.target.value)} placeholder="e.g., 1.08910 / 4006.77" />
           </div>
 
           <div className="space-y-2">
@@ -320,20 +275,12 @@ export function TradeFormDialog(props: {
 
           <div className="space-y-2 sm:col-span-2">
             <Label>Tags (comma separated)</Label>
-            <Input
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
-              placeholder="london, breakout, A+ setup"
-            />
+            <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="london, breakout, A+ setup" />
           </div>
 
           <div className="space-y-2 sm:col-span-2">
             <Label>Notes</Label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="What happened? What did you do well? What to improve?"
-            />
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What happened? What to improve?" />
           </div>
         </div>
 
@@ -341,15 +288,17 @@ export function TradeFormDialog(props: {
           Preview:{" "}
           {preview ? (
             <span className="font-medium text-foreground">
-              {preview.pips} pips{preview.r !== undefined ? ` • ${preview.r}R` : ""}
+              {preview.pips} pips
+              {preview.points !== null ? ` (${preview.points} points)` : ""}
+              {preview.r !== undefined ? ` • ${preview.r}R` : ""}
             </span>
           ) : (
             <span>Enter Entry + Exit to see pips.</span>
           )}
         </div>
 
-        {preview?.warning ? (
-          <div className="text-sm text-amber-600">{preview.warning}</div>
+        {preview?.slWarning ? (
+          <div className="text-sm text-amber-600">{preview.slWarning}</div>
         ) : null}
 
         {error ? <div className="text-sm text-red-600">{error}</div> : null}
