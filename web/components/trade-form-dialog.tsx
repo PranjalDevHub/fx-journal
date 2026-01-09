@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { db, type Trade, type TradeDirection } from "@/lib/db"
 import { calcPips, calcRMultiple } from "@/lib/trade-math"
+import { InstrumentSelect } from "@/components/instrument-select"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -38,8 +39,8 @@ function nowLocalDatetimeValue() {
 }
 
 function toIsoFromDatetimeLocal(value: string) {
-  const d = new Date(value) // interpreted as local time
-  return d.toISOString() // stored as UTC ISO
+  const d = new Date(value)
+  return d.toISOString()
 }
 
 function toDatetimeLocalFromIso(iso: string) {
@@ -131,7 +132,6 @@ export function TradeFormDialog(props: {
     const inst = instrument.trim().toUpperCase()
     const looksFx = isFxPair(inst)
 
-    // Safety warning: if user typed an FX pair but the prices are huge, it's likely wrong instrument/format
     const priceTooLargeForNonJpyFx =
       looksFx && !inst.endsWith("JPY") && (entry > 20 || exit > 20)
     const priceTooLargeForJpyFx =
@@ -139,7 +139,7 @@ export function TradeFormDialog(props: {
 
     const warning =
       priceTooLargeForNonJpyFx || priceTooLargeForJpyFx
-        ? `These prices look too large for ${inst}. If this is Gold, set instrument to XAUUSD (or correct the price decimals).`
+        ? `These prices look too large for ${inst}. If this is Gold, choose XAUUSD (or correct the decimals).`
         : null
 
     const pips = calcPips({
@@ -169,7 +169,7 @@ export function TradeFormDialog(props: {
     const sl = stopLoss ? Number(stopLoss) : undefined
     const tp = takeProfit ? Number(takeProfit) : undefined
 
-    if (!instrument.trim()) return setError("Instrument is required (e.g., EURUSD or XAUUSD).")
+    if (!instrument.trim()) return setError("Instrument is required.")
     if (!Number.isFinite(entry) || !Number.isFinite(exit)) {
       return setError("Entry and Exit must be valid numbers.")
     }
@@ -238,19 +238,25 @@ export function TradeFormDialog(props: {
         <DialogHeader>
           <DialogTitle>{mode === "add" ? "Add trade" : "Edit trade"}</DialogTitle>
           <DialogDescription>
-            {mode === "add" ? "Log quickly. You can refine later." : "Fix details to keep analytics accurate."}
+            {mode === "add"
+              ? "Log quickly. You can refine later."
+              : "Fix details to keep analytics accurate."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label>Instrument</Label>
-            <Input value={instrument} onChange={(e) => setInstrument(e.target.value)} placeholder="EURUSD / XAUUSD" />
+            <InstrumentSelect value={instrument} onChange={setInstrument} />
           </div>
 
           <div className="space-y-2">
             <Label>Strategy (optional)</Label>
-            <Input value={strategy} onChange={(e) => setStrategy(e.target.value)} placeholder="NY Breakout" />
+            <Input
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value)}
+              placeholder="NY Breakout"
+            />
           </div>
 
           <div className="space-y-2">
@@ -268,22 +274,38 @@ export function TradeFormDialog(props: {
 
           <div className="space-y-2">
             <Label>Open time</Label>
-            <Input type="datetime-local" value={openTime} onChange={(e) => setOpenTime(e.target.value)} />
+            <Input
+              type="datetime-local"
+              value={openTime}
+              onChange={(e) => setOpenTime(e.target.value)}
+            />
           </div>
 
           <div className="space-y-2">
             <Label>Close time</Label>
-            <Input type="datetime-local" value={closeTime} onChange={(e) => setCloseTime(e.target.value)} />
+            <Input
+              type="datetime-local"
+              value={closeTime}
+              onChange={(e) => setCloseTime(e.target.value)}
+            />
           </div>
 
           <div className="space-y-2">
             <Label>Entry</Label>
-            <Input value={entryPrice} onChange={(e) => setEntryPrice(e.target.value)} placeholder="1.08750 / 2034.50" />
+            <Input
+              value={entryPrice}
+              onChange={(e) => setEntryPrice(e.target.value)}
+              placeholder="1.08750 / 2034.50"
+            />
           </div>
 
           <div className="space-y-2">
             <Label>Exit</Label>
-            <Input value={exitPrice} onChange={(e) => setExitPrice(e.target.value)} placeholder="1.08910 / 2040.10" />
+            <Input
+              value={exitPrice}
+              onChange={(e) => setExitPrice(e.target.value)}
+              placeholder="1.08910 / 2040.10"
+            />
           </div>
 
           <div className="space-y-2">
@@ -298,12 +320,20 @@ export function TradeFormDialog(props: {
 
           <div className="space-y-2 sm:col-span-2">
             <Label>Tags (comma separated)</Label>
-            <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="london, breakout, A+ setup" />
+            <Input
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              placeholder="london, breakout, A+ setup"
+            />
           </div>
 
           <div className="space-y-2 sm:col-span-2">
             <Label>Notes</Label>
-            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What happened? What did you do well? What to improve?" />
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="What happened? What did you do well? What to improve?"
+            />
           </div>
         </div>
 
