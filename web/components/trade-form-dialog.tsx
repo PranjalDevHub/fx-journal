@@ -53,6 +53,18 @@ function toDatetimeLocalFromIso(iso: string) {
   return `${yyyy}-${mm}-${dd}T${hh}:${min}`
 }
 
+function isFxPair(symbolRaw: string): boolean {
+  const s = symbolRaw.trim().toUpperCase()
+  if (s.length !== 6) return false
+  const base = s.slice(0, 3)
+  const quote = s.slice(3, 6)
+  const ccys = new Set([
+    "USD", "EUR", "JPY", "GBP", "AUD", "NZD", "CHF", "CAD",
+    "ZAR", "TRY", "SEK", "NOK", "MXN", "SGD", "HKD", "PLN",
+  ])
+  return ccys.has(base) && ccys.has(quote)
+}
+
 export function TradeFormDialog(props: {
   mode: Mode
   open: boolean
@@ -115,14 +127,38 @@ export function TradeFormDialog(props: {
     const entry = Number(entryPrice)
     const exit = Number(exitPrice)
     if (!Number.isFinite(entry) || !Number.isFinite(exit)) return null
-    const pips = calcPips({ instrument, direction, entry, exit })
+
+    const inst = instrument.trim().toUpperCase()
+    const looksFx = isFxPair(inst)
+
+    // Safety warning: if user typed an FX pair but the prices are huge, it's likely wrong instrument/format
+    const priceTooLargeForNonJpyFx =
+      looksFx && !inst.endsWith("JPY") && (entry > 20 || exit > 20)
+    const priceTooLargeForJpyFx =
+      looksFx && inst.endsWith("JPY") && (entry > 1000 || exit > 1000)
+
+    const warning =
+      priceTooLargeForNonJpyFx || priceTooLargeForJpyFx
+        ? `These prices look too large for ${inst}. If this is Gold, set instrument to XAUUSD (or correct the price decimals).`
+        : null
+
+    const pips = calcPips({
+      instrument: inst,
+      direction,
+      entry,
+      exit,
+      entryRaw: entryPrice,
+      exitRaw: exitPrice,
+    })
+
     const r = calcRMultiple({
       direction,
       entry,
       exit,
       stopLoss: stopLoss ? Number(stopLoss) : undefined,
     })
-    return { pips, r }
+
+    return { pips, r, warning }
   }, [instrument, direction, entryPrice, exitPrice, stopLoss])
 
   async function handleSave() {
@@ -133,7 +169,7 @@ export function TradeFormDialog(props: {
     const sl = stopLoss ? Number(stopLoss) : undefined
     const tp = takeProfit ? Number(takeProfit) : undefined
 
-    if (!instrument.trim()) return setError("Instrument is required (e.g., EURUSD).")
+    if (!instrument.trim()) return setError("Instrument is required (e.g., EURUSD or XAUUSD).")
     if (!Number.isFinite(entry) || !Number.isFinite(exit)) {
       return setError("Entry and Exit must be valid numbers.")
     }
@@ -146,7 +182,15 @@ export function TradeFormDialog(props: {
       const instrumentClean = instrument.trim().toUpperCase()
       const strategyClean = strategy.trim()
 
-      const pips = calcPips({ instrument: instrumentClean, direction, entry, exit })
+      const pips = calcPips({
+        instrument: instrumentClean,
+        direction,
+        entry,
+        exit,
+        entryRaw: entryPrice,
+        exitRaw: exitPrice,
+      })
+
       const rMultiple = calcRMultiple({ direction, entry, exit, stopLoss: sl })
 
       const common = {
@@ -171,22 +215,11 @@ export function TradeFormDialog(props: {
 
       if (mode === "add") {
         const id = crypto.randomUUID()
-
-        const newTrade: Trade = {
-          id,
-          ...common,
-          createdAt: nowIso,
-        }
-
+        const newTrade: Trade = { id, ...common, createdAt: nowIso }
         await db.trades.add(newTrade)
       } else {
         if (!trade) throw new Error("Missing trade in edit mode.")
-
-        const updatedTrade: Trade = {
-          ...trade,
-          ...common,
-        }
-
+        const updatedTrade: Trade = { ...trade, ...common }
         await db.trades.put(updatedTrade)
       }
 
@@ -212,16 +245,12 @@ export function TradeFormDialog(props: {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label>Instrument</Label>
-            <Input value={instrument} onChange={(e) => setInstrument(e.target.value)} placeholder="EURUSD" />
+            <Input value={instrument} onChange={(e) => setInstrument(e.target.value)} placeholder="EURUSD / XAUUSD" />
           </div>
 
           <div className="space-y-2">
             <Label>Strategy (optional)</Label>
-            <Input
-              value={strategy}
-              onChange={(e) => setStrategy(e.target.value)}
-              placeholder="NY Breakout"
-            />
+            <Input value={strategy} onChange={(e) => setStrategy(e.target.value)} placeholder="NY Breakout" />
           </div>
 
           <div className="space-y-2">
@@ -249,22 +278,22 @@ export function TradeFormDialog(props: {
 
           <div className="space-y-2">
             <Label>Entry</Label>
-            <Input value={entryPrice} onChange={(e) => setEntryPrice(e.target.value)} placeholder="1.08750" />
+            <Input value={entryPrice} onChange={(e) => setEntryPrice(e.target.value)} placeholder="1.08750 / 2034.50" />
           </div>
 
           <div className="space-y-2">
             <Label>Exit</Label>
-            <Input value={exitPrice} onChange={(e) => setExitPrice(e.target.value)} placeholder="1.08910" />
+            <Input value={exitPrice} onChange={(e) => setExitPrice(e.target.value)} placeholder="1.08910 / 2040.10" />
           </div>
 
           <div className="space-y-2">
             <Label>Stop loss (optional)</Label>
-            <Input value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder="1.08650" />
+            <Input value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder="..." />
           </div>
 
           <div className="space-y-2">
             <Label>Take profit (optional)</Label>
-            <Input value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} placeholder="1.09050" />
+            <Input value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} placeholder="..." />
           </div>
 
           <div className="space-y-2 sm:col-span-2">
@@ -288,6 +317,10 @@ export function TradeFormDialog(props: {
             <span>Enter Entry + Exit to see pips.</span>
           )}
         </div>
+
+        {preview?.warning ? (
+          <div className="text-sm text-amber-600">{preview.warning}</div>
+        ) : null}
 
         {error ? <div className="text-sm text-red-600">{error}</div> : null}
 
